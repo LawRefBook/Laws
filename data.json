@@ -2076,7 +2076,7 @@
         "id": "010dd06f-9dd5-4e47-86a4-996003e8714c"
     },
     {
-        "category": "案例",
+        "category": "司法案例",
         "folder": "案例",
         "isSubFolder": true,
         "laws": [
@@ -2089,9 +2089,10 @@
         "id": "b24b6c89-e76a-482c-82d0-7a76381fc0d7"
     },
     {
-        "category": "北京市地方法规",
+        "category": "北京市",
         "folder": "地方性法规/北京",
         "isSubFolder": true,
+        "group": "地方性法规",
         "laws": [
             {
                 "name": "中关村国家自主创新示范区条例",
