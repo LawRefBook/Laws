@@ -45,34 +45,35 @@ with open("./cate.txt", "r") as f:
 
 def requestPage(page: int):
     # 法律
-    params = (
-        ('page', str(page)),
-        ('type', ''),
-        ('xlwj', ['02', '03', '04', '05', '06', '07', '08']),
-        ('searchType', 'title;accurate;1'),
-        ('sortTr', 'f_bbrq_s;desc'),
-        ('gbrqStart', ''),
-        ('gbrqEnd', ''),
-        ('sxrqStart', ''),
-        ('sxrqEnd', ''),
-        ('size', '10'),
-        ('_', '1647148625862'),
-    )
-
-    # 司法解释
     # params = (
-    #     ('type', 'sfjs'),
-    #     ('searchType', 'title;accurate'),
+    #     ('page', str(page)),
+    #     ('type', ''),
+    #     ('xlwj', ['02', '03', '04', '05', '06', '07', '08']),
+    #     ('searchType', 'title;accurate;1'),
     #     ('sortTr', 'f_bbrq_s;desc'),
     #     ('gbrqStart', ''),
     #     ('gbrqEnd', ''),
     #     ('sxrqStart', ''),
     #     ('sxrqEnd', ''),
-    #     ('sort', 'true'),
-    #     ('page', str(page)),
     #     ('size', '10'),
-    #     ('_', 1647659481879),
+    #     ('_', '1647148625862'),
     # )
+
+    # 司法解释
+    params = (
+        # ('type', 'sfjs'),
+        ("zdjg", "4028814858a4d78b0158a50f344e0048&4028814858a4d78b0158a50fa2ba004c"),
+        ('searchType', 'title;accurate'),
+        ('sortTr', 'f_bbrq_s;desc'),
+        ('gbrqStart', ''),
+        ('gbrqEnd', ''),
+        ('sxrqStart', ''),
+        ('sxrqEnd', ''),
+        ('sort', 'true'),
+        ('page', str(page)),
+        ('size', '10'),
+        ('_', 1647659481879),
+    )
 
     hash_sum = sha1(json.dumps(params).encode()).hexdigest()
 
@@ -193,7 +194,7 @@ def parseWord(path, result):
     parseContent(title, desc, content, result)
 
 
-zh_nums = "[一二三四五六七八九十零]+"
+zh_nums = "[一二三四五六七八九十零百千万]+"
 
 indnet_reg = [
     f"第{zh_nums}编",
@@ -201,6 +202,7 @@ indnet_reg = [
     f"第{zh_nums}节",
 ]
 
+line_start = "^((第{zh_nums}条)|{zh_nums}、)"
 
 def parseContent(title, desc: List[str], content, result):
     simple_title = title.replace("中华人民共和国", "")
@@ -242,7 +244,7 @@ def parseContent(title, desc: List[str], content, result):
             menu_start = True
             menu_at = i
 
-        if line == pattern or (menu_start and re.match(f"^第{zh_nums}条", line)):
+        if line == pattern or (menu_start and re.match(line_start, line)):
             menu_start = False
 
         if not menu_start:
