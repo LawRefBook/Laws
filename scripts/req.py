@@ -1,5 +1,6 @@
 import glob
 import json
+import math
 import os
 import re
 import time
@@ -27,7 +28,7 @@ headers = {
 }
 
 exists = set(map(lambda x: os.path.basename(x).split(".")[
-             0], glob.glob("./**/*.md", recursive=True)))
+             0], glob.glob("../**/*.md", recursive=True)))
 
 
 category = []
@@ -43,27 +44,29 @@ with open("./cate.txt", "r") as f:
             "category": title,
         })
 
+
 def requestPage(page: int):
     # 法律
-    # params = (
-    #     ('page', str(page)),
-    #     ('type', ''),
-    #     ('xlwj', ['02', '03', '04', '05', '06', '07', '08']),
-    #     ('searchType', 'title;accurate;1'),
-    #     ('sortTr', 'f_bbrq_s;desc'),
-    #     ('gbrqStart', ''),
-    #     ('gbrqEnd', ''),
-    #     ('sxrqStart', ''),
-    #     ('sxrqEnd', ''),
-    #     ('size', '10'),
-    #     ('_', '1647148625862'),
-    # )
+    params = (
+        ('page', str(page)),
+        ('type', ''),
+        ('xlwj', ['02', '03', '04', '05', '06', '07', '08']),
+        ('searchType', 'title;accurate;1'),
+        ('sortTr', 'f_bbrq_s;desc'),
+        ('gbrqStart', ''),
+        ('gbrqEnd', ''),
+        ('sxrqStart', ''),
+        ('sxrqEnd', ''),
+        ('size', '10'),
+        ('_', '1647148625862'),
+    )
 
     # 司法解释
     params = (
         # ('type', 'sfjs'),
-        ("zdjg", "4028814858a4d78b0158a50f344e0048&4028814858a4d78b0158a50fa2ba004c"),
-        ('searchType', 'title;accurate'),
+        # ("zdjg", "4028814858a4d78b0158a50f344e0048&4028814858a4d78b0158a50fa2ba004c"), #北京
+        ("zdjg", "4028814858b9b8e50158bed591680061&4028814858b9b8e50158bed64efb0065"), #河南
+        ('searchType', 'title;accurate;1,5'),
         ('sortTr', 'f_bbrq_s;desc'),
         ('gbrqStart', ''),
         ('gbrqEnd', ''),
@@ -77,7 +80,7 @@ def requestPage(page: int):
 
     hash_sum = sha1(json.dumps(params).encode()).hexdigest()
 
-    path = f"./__cache__/{hash_sum}.json"
+    path = f"./__cache__/req_cache/{hash_sum}.json"
     if os.path.exists(path):
         with open(path, "r") as f:
             return json.load(f)
@@ -95,7 +98,7 @@ def requestPage(page: int):
 
 
 def fetchDeails(id: str):
-    path = f"./__cache__/{id}.json"
+    path = f"./__cache__/req_cache/{id}.json"
     if os.path.exists(path):
         with open(path, "r") as f:
             return json.load(f)
@@ -120,15 +123,15 @@ def fetchDeails(id: str):
 
 def fetchWord(path: str):
     filename = os.path.basename(path)
-    if os.path.exists(f"./__cache__/{filename}"):
+    if os.path.exists(f"./__cache__/words/{filename}"):
         return
     url = "https://wb.flk.npc.gov.cn" + path
     print("fetch", path)
-    urllib.request.urlretrieve(url, f"./__cache__/{filename}")
+    urllib.request.urlretrieve(url, f"./__cache__/words/{filename}")
     time.sleep(1)
 
 
-# bypass = ".*(?:刑法|民法典).*"
+bypass = "[^(.*驻马店市优化营商环境条例.*)]"
 num = [0]
 
 
@@ -136,13 +139,10 @@ def parse(arr):
     for item in arr:
         page_id = item["id"]
         title = re.sub("^中华人民共和国", "", item["title"])
-        # if re.match(bypass, title):
-        # continue
+        # if "三门峡市文明行为促进条例" not in title:
+            # continue
         if title in exists:
-            print("skip", title)
             continue
-        # if len(title) > 14:
-        #     continue
         num[0] += 1
         ret = fetchDeails(page_id)
         try:
@@ -150,7 +150,6 @@ def parse(arr):
             parseDetails(ret)
         except Exception as e:
             print("paring error", title, e)
-
 
 def parseDetails(data):
     result = data["result"]
@@ -165,11 +164,26 @@ def parseDetails(data):
 
     if found:
         fetchWord(file["path"])
-        path = f"./__cache__/{os.path.basename(filename)}"
+        path = f"./__cache__/words/{os.path.basename(filename)}"
+        print(path)
         if os.path.exists(path):
             parseWord(path, result)
     else:
         print("no word file found")
+
+
+zh_nums = "[一二三四五六七八九十零百千万1234567890]+"
+
+indnet_reg = [
+    f"^第{zh_nums}编",
+    f"^第{zh_nums}章",
+    f"^第{zh_nums}节",
+]
+
+line_reg = indnet_reg + [
+    f"^第{zh_nums}条",
+    f"^{zh_nums}、"
+]
 
 
 def parseWord(path, result):
@@ -177,35 +191,59 @@ def parseWord(path, result):
     document = Document(f)
     f.close()
     title = result["title"].strip()
-    desc = []
+
+    print("paring", title)
+
+    desc = ""
     content = []
-    isDesc = True
-    for no, line in enumerate(filter(lambda x: x, map(lambda x: x.text.strip(), document.paragraphs))):
-        if no == 0 and len(title) == 0:
-            title = line
-            continue
+    isDesc = False
+
+    lines = list(
+        filter(
+            lambda x:x,
+            map(
+                lambda x:x.text.strip(),
+                document.paragraphs
+            )
+        )
+    )
+
+    for n, line in enumerate(lines):
+        if re.match(r"[（\(]\d{4,4}年\d{1,2}月\d{1,2}日", line):
+            isDesc = True
+        if isDesc and re.match("[）\)]$", line):
+            isDesc = False
+        if isDesc and re.match(r"目.*录", line):
+            isDesc = False
         if isDesc:
-            desc.append(line)
-            if re.match("（\d{4,4}年\d{1,2}月\d{1,2}日", line):
+            match = False
+            for reg in line_reg:
+                if re.match(reg, line):
+                    match = True
+                    break
+            if match:
                 isDesc = False
-            continue
-        content.append(line)
-    # print(desc)
-    parseContent(title, desc, content, result)
+        if isDesc:
+            desc += line
+        elif n > 1:
+            content.append(line)
+    parseContent(title, desc, content)
 
 
-zh_nums = "[一二三四五六七八九十零百千万]+"
-
-indnet_reg = [
-    f"第{zh_nums}编",
-    f"第{zh_nums}章",
-    f"第{zh_nums}节",
+line_start = f"""^({"|".join(map(lambda x: f"({x})".replace(zh_nums, "一"), line_reg))})"""
+remove_sub = [
+    "^（",
+    "^\(",
+    "）$",
+    "\)$",
+    "^根据",
+    "^自",
 ]
 
-line_start = "^((第{zh_nums}条)|{zh_nums}、)"
-
-def parseContent(title, desc: List[str], content, result):
+def parseContent(title, desc: str, content):
     simple_title = title.replace("中华人民共和国", "")
+    if simple_title in exists:
+        return
     subPath = ""
     for line in category:
         if simple_title in line["title"]:
@@ -215,20 +253,21 @@ def parseContent(title, desc: List[str], content, result):
     if not os.path.exists(p):
         os.makedirs(p)
 
-
     path = f"{p}/{simple_title}.md"
     if os.path.exists(path):
         return
 
-    desc = list(map(lambda x: x.strip("（）"),  desc))
-    desc_arr = []
-    for line in desc:
-        subArr = re.split("[，、　]", line)
-        if subArr:
-            desc_arr += subArr
-        else:
-            desc_arr += [line]
-    desc = desc_arr
+    descArr = re.split("[，、　 ]", desc.strip("（）()"))
+    descArr = list(filter(lambda x: x, descArr))
+    for i in range(len(descArr)):
+        line = descArr[i]
+        for pattern in remove_sub:
+            line = re.sub(pattern, "", line)
+        line = re.sub("^(\d{4,4}年\d{1,2}月\d{1,2}日)",
+                        lambda x: x.group(0) + " ", line)
+        line = line.replace("起施行", "施行")
+        descArr[i] = line
+    # print(descArr)
 
     menu_start = False
     menu_at = -1
@@ -240,9 +279,10 @@ def parseContent(title, desc: List[str], content, result):
             pattern = line
             continue
 
-        if re.match("目\s*录", line):
+        if re.match("目.*录", line):
             menu_start = True
             menu_at = i
+            continue
 
         if line == pattern or (menu_start and re.match(line_start, line)):
             menu_start = False
@@ -255,14 +295,7 @@ def parseContent(title, desc: List[str], content, result):
     with open(path, "w") as f:
         f.write("# " + title + "\n\n")
 
-        for line in desc:
-            if line == title:
-                continue
-            line = re.sub("^根据", "", line)
-            line = re.sub("^自", "", line)
-            line = re.sub("^(\d{4,4}年\d{1,2}月\d{1,2}日)",
-                          lambda x: x.group(0) + " ", line)
-            line = line.replace("起施行", "施行")
+        for line in descArr:
             f.write(line + "\n\n")
 
         f.write("<!-- INFO END -->\n\n")
@@ -285,7 +318,6 @@ def parseContent(title, desc: List[str], content, result):
 
 def main():
     print(exists)
-    print(category)
     for i in range(60):
         ret = requestPage(i + 1)
         parse(ret["result"]["data"])
