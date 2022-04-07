@@ -64,9 +64,9 @@ def requestPage(page: int):
     # 司法解释
     params = (
         # ('type', 'sfjs'),
-        # ("zdjg", "4028814858a4d78b0158a50f344e0048&4028814858a4d78b0158a50fa2ba004c"), #北京
+        ("zdjg", "4028814858a4d78b0158a50f344e0048&4028814858a4d78b0158a50fa2ba004c"), #北京
         # ("zdjg", "4028814858b9b8e50158bed591680061&4028814858b9b8e50158bed64efb0065"), #河南
-        ("zdjg", "4028814858b9b8e50158bec45e9a002d&4028814858b9b8e50158bec500350031"), # 上海
+        # ("zdjg", "4028814858b9b8e50158bec45e9a002d&4028814858b9b8e50158bec500350031"), # 上海
         ('searchType', 'title;accurate;1,5'),
         ('sortTr', 'f_bbrq_s;desc'),
         ('gbrqStart', ''),
