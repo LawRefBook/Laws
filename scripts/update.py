@@ -8,6 +8,7 @@ import functools
 import os
 import re
 
+
 def addUUID():
     with open("../data.json", "r") as f:
         data = json.load(f)
@@ -26,6 +27,7 @@ def getLevel(pattern):
         return "法律"
     return "其他"
 
+
 def addMissingLaw():
     with open("../data.json", "r") as f:
         data = json.load(f)
@@ -39,7 +41,21 @@ def addMissingLaw():
         return ret
 
     ignorePattern = ".+民法典|.+刑法|.+模版|.+index.md|.+README.md|.*__cache__"
-    allLaws = set(map(lambda x: x["name"], functools.reduce(lambda a,b : a + b ,map(lambda x:x["laws"], data))))
+    laws = functools.reduce(
+        lambda a, b: a + b,
+        map(
+            lambda x: x["laws"],
+            data
+        )
+    )
+    allLaws = set(
+        filter(lambda x: x, [
+            x for y in map(
+                lambda x: [x["name"], x["subtitle"] if "subtitle" in x else None, x["filename"] if "filename" in x else None],
+                laws
+            ) for x in y
+        ])
+    )
     for line in glob.glob("../**/*.md", recursive=True):
         if re.match(ignorePattern, line):
             # print(line)
@@ -65,14 +81,17 @@ def addMissingLaw():
     with open("../data.json", "w") as f:
         json.dump(data, f, indent=4, ensure_ascii=False)
 
+
 def renameFiles():
     for line in glob.glob("../**/*.md", recursive=True):
         newPath = line.replace("/中华人民共和国", "")
         shutil.move(line, newPath)
 
+
 # 用于找到 “第x条" 或者 "第x条之一"
 num = "[一二三四五六七八九十零]"
 title_re = "^(第"+num+"{1,6}?条(?:之"+num+"{1,2})*\s*)"
+
 
 def cleanTitle(line: str):
 
@@ -80,6 +99,7 @@ def cleanTitle(line: str):
         return matched.group(0).strip() + " "
 
     return re.sub(title_re, f, line)
+
 
 def clean():
     for filename in glob.glob("../**/*.md", recursive=True):
@@ -111,6 +131,7 @@ def clean():
         with open(filename, "w") as f:
             f.writelines(data)
 
+
 def test():
     assert "第一条 测试" == cleanTitle("第一条测试")
     assert "第一条 测试" == cleanTitle("第一条 测试")
@@ -118,12 +139,14 @@ def test():
     assert "第一条之一 测试" == cleanTitle("第一条之一测试")
     assert "第一条之一 测试" == cleanTitle("第一条之一 测试")
 
+
 def main():
     test()
     renameFiles()
     addMissingLaw()
     addUUID()
     clean()
+
 
 if __name__ == "__main__":
     main()
