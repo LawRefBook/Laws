@@ -3,10 +3,12 @@ import json
 import math
 import os
 import re
+import shutil
 import time
 import urllib.request
 from hashlib import sha1
 from typing import List
+from bs4 import BeautifulSoup
 
 import requests
 from docx import Document
@@ -51,7 +53,7 @@ def requestPage(page: int):
         ('page', str(page)),
         ('type', ''),
         # ('xlwj', ['02', '03', '04', '05', '06', '07', '08']),
-        ("fgxlwj", "xzfg"),
+        # ("fgxlwj", "xzfg"), # 行政法规
         ('searchType', 'title;accurate;1'),
         ('sortTr', 'f_bbrq_s;desc'),
         ('gbrqStart', ''),
@@ -62,23 +64,23 @@ def requestPage(page: int):
         ('_', '1647148625862'),
     )
 
-    # # 司法解释
-    # params = (
-    #     # ('type', 'sfjs'),
-    #     ("zdjg", "4028814858a4d78b0158a50f344e0048&4028814858a4d78b0158a50fa2ba004c"), #北京
-    #     # ("zdjg", "4028814858b9b8e50158bed591680061&4028814858b9b8e50158bed64efb0065"), #河南
-    #     # ("zdjg", "4028814858b9b8e50158bec45e9a002d&4028814858b9b8e50158bec500350031"), # 上海
-    #     ('searchType', 'title;accurate;1,5'),
-    #     ('sortTr', 'f_bbrq_s;desc'),
-    #     ('gbrqStart', ''),
-    #     ('gbrqEnd', ''),
-    #     ('sxrqStart', ''),
-    #     ('sxrqEnd', ''),
-    #     ('sort', 'true'),
-    #     ('page', str(page)),
-    #     ('size', '10'),
-    #     ('_', 1647659481879),
-    # )
+    # 司法解释
+    params = (
+        ('type', 'sfjs'),
+        # ("zdjg", "4028814858a4d78b0158a50f344e0048&4028814858a4d78b0158a50fa2ba004c"), #北京
+        # ("zdjg", "4028814858b9b8e50158bed591680061&4028814858b9b8e50158bed64efb0065"), #河南
+        # ("zdjg", "4028814858b9b8e50158bec45e9a002d&4028814858b9b8e50158bec500350031"), # 上海
+        ('searchType', 'title;accurate;1,5'),
+        ('sortTr', 'f_bbrq_s;desc'),
+        ('gbrqStart', ''),
+        ('gbrqEnd', ''),
+        ('sxrqStart', ''),
+        ('sxrqEnd', ''),
+        ('sort', 'true'),
+        ('page', str(page)),
+        ('size', '10'),
+        ('_', 1647659481879),
+    )
 
     hash_sum = sha1(json.dumps(params).encode()).hexdigest()
 
@@ -132,47 +134,79 @@ def fetchWord(path: str):
     urllib.request.urlretrieve(url, f"./__cache__/words/{filename}")
     time.sleep(1)
 
-
-bypass = "[^(.*驻马店市优化营商环境条例.*)]"
-num = [0]
-
+spec_title = None
 
 def parse(arr):
     for item in arr:
         page_id = item["id"]
         title = re.sub("^中华人民共和国", "", item["title"])
-        # if "三门峡市文明行为促进条例" not in title:
-            # continue
+        if spec_title and spec_title != title:
+            continue
         if title in exists:
             continue
-        num[0] += 1
+        skip = bool(re.search(r"的(决定|复函|批复|答复|批复)$", title))
+        print("T" if skip else "F",title)
+        if skip:
+            continue
         ret = fetchDeails(page_id)
         try:
             print("paring", title)
             parseDetails(ret)
         except Exception as e:
             print("paring error", title, e)
+        if spec_title and spec_title == title:
+            exit(1)
+
+FILE_SORT_ORDER = {
+    "WORD": 2,
+    "HTML": 1,
+}
 
 def parseDetails(data):
     result = data["result"]
     body = result["body"]
-    found = False
-    filename = ""
-    for file in body:
-        if file["type"] == "WORD":
-            found = True
-            filename = file["path"]
-            break
 
-    if found:
-        fetchWord(file["path"])
-        path = f"./__cache__/words/{os.path.basename(filename)}"
-        print(path)
+    files = sorted(body, key=lambda x: FILE_SORT_ORDER[x["type"]] if x["type"] in FILE_SORT_ORDER else 1000)
+
+    if len(files) == 0:
+        return
+
+    target = files[0]
+    if target["type"] == "WORD":
+        fetchWord(target["path"])
+        path = f"./__cache__/words/{os.path.basename(target['path'])}"
         if os.path.exists(path):
             parseWord(path, result)
-    else:
-        print("no word file found")
+    elif  target["type"] == "HTML":
+        if not os.path.exists("./__cache__/html/"):
+            os.makedirs("./__cache__/html/")
+        path = f"./__cache__/html/{os.path.basename(target['url'])}"
+        if not os.path.exists(path):
+            fetchHTML(target["url"], path)
+        if os.path.exists(path):
+            praseHTML(path)
 
+def fetchHTML(url: str, path: str):
+    response = requests.get('https://wb.flk.npc.gov.cn' + url,
+                            headers=headers)
+    response.encoding = "utf8"
+    with open(path, "w", encoding="utf8") as f:
+        f.write(response.text)
+    time.sleep(1)
+
+def praseHTML(path: str):
+    print(path)
+    with open(path, "r") as f:
+        data = f.read()
+
+    bs4 = BeautifulSoup(data)
+    title = bs4.title.text
+    parts = bs4.find("div", class_="law-content").find_all("p")
+    content = map(lambda x:x.text.replace("\xa0", " ") ,parts)
+    content = filter(lambda x:x.strip() and not title.startswith(x) and not title.endswith(x), content)
+    content = list(content)
+
+    parseContent(title, content[0], content[1:])
 
 zh_nums = "[一二三四五六七八九十零百千万1234567890]+"
 
@@ -187,14 +221,17 @@ line_reg = indnet_reg + [
     # f"^{zh_nums}、"
 ]
 
+def isStartLine(line):
+    for reg in line_reg:
+        if re.match(reg, line):
+            return True
+
 
 def parseWord(path, result):
     f = open(path, 'rb')
     document = Document(f)
     f.close()
     title = result["title"].strip()
-
-    print("paring", title)
 
     desc = ""
     content = []
@@ -210,25 +247,29 @@ def parseWord(path, result):
         )
     )
 
+    hasDesc = False
     for n, line in enumerate(lines):
-        if re.match(r"[（\(]\d{4,4}年\d{1,2}月\d{1,2}日", line):
+        # 信息行
+        if re.match(r"^[（\(]\d{4,4}年\d{1,2}月\d{1,2}日", line):
             isDesc = True
-        if isDesc and re.match("[）\)]$", line):
-            isDesc = False
-        if isDesc and re.match(r"目.*录", line):
-            isDesc = False
-        if isDesc:
-            match = False
-            for reg in line_reg:
-                if re.match(reg, line):
-                    match = True
-                    break
-            if match:
-                isDesc = False
+            hasDesc = True
+
         if isDesc:
             desc += line
-        elif n > 0:
+        elif n > 0 and hasDesc:
             content.append(line)
+
+        # 信息行结束
+        if isDesc and re.search("[）\)]$", line):
+            isDesc = False
+        if isDesc and re.search(r"目.*录", line):
+            isDesc = False
+        if isDesc and isStartLine(line):
+            isDesc = False
+
+        if not hasDesc and re.search("^法释", line):
+            hasDesc = True
+
     parseContent(title, desc, content)
 
 
@@ -275,6 +316,7 @@ def parseContent(title, desc: str, content):
     menu_at = -1
     pattern = ""
     filtered_content = []
+    skip = False
     for i in range(len(content)):
         line = content[i]
         if menu_at >= 0 and i == menu_at + 1:
@@ -289,11 +331,22 @@ def parseContent(title, desc: str, content):
         if line == pattern or (menu_start and re.match(line_start, line)):
             menu_start = False
 
-        if not menu_start:
+        if re.match("公.*告", line):
+            skip = True
+
+        if re.match("^附", line):
+            break
+
+        if not menu_start and not skip:
             filtered_content.append(line)
+
+        if skip and re.match("法释", line):
+            skip = False
 
     content = filtered_content
 
+    if spec_title:
+        return
     with open(path, "w") as f:
         f.write("# " + title + "\n\n")
 
@@ -319,7 +372,6 @@ def parseContent(title, desc: str, content):
 
 
 def main():
-    print(exists)
     for i in range(60):
         ret = requestPage(i + 1)
         parse(ret["result"]["data"])
