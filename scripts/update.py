@@ -74,7 +74,8 @@ def addMissingLaw():
         if "laws" not in target:
             target["laws"] = []
         item = dict()
-        item["name"] = name.replace("中华人民共和国", "")
+        # item["name"] = name.replace("中华人民共和国", "")
+        item["name"] = re.sub("^中华人民共和国", "", name)
         item["level"] = level
         target["laws"].append(item)
 

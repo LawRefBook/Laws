@@ -1,13 +1,10 @@
 import glob
 import json
-import math
 import os
 import re
-import shutil
 import time
 import urllib.request
 from hashlib import sha1
-from typing import List
 from bs4 import BeautifulSoup
 
 import requests
@@ -66,10 +63,12 @@ def requestPage(page: int):
 
     # 司法解释
     params = (
-        ('type', 'sfjs'),
+        # ('type', 'sfjs'),
         # ("zdjg", "4028814858a4d78b0158a50f344e0048&4028814858a4d78b0158a50fa2ba004c"), #北京
         # ("zdjg", "4028814858b9b8e50158bed591680061&4028814858b9b8e50158bed64efb0065"), #河南
         # ("zdjg", "4028814858b9b8e50158bec45e9a002d&4028814858b9b8e50158bec500350031"), # 上海
+        # ("zdjg", "4028814858b9b8e50158bec5c28a0035&4028814858b9b8e50158bec6abbf0039"), # 江苏
+        ("zdjg", "4028814858b9b8e50158bec7c42f003d&4028814858b9b8e50158beca3c590041"), # 浙江
         ('searchType', 'title;accurate;1,5'),
         ('sortTr', 'f_bbrq_s;desc'),
         ('gbrqStart', ''),
@@ -170,6 +169,8 @@ def parseDetails(data):
 
     if len(files) == 0:
         return
+
+    print(files)
 
     target = files[0]
     if target["type"] == "WORD":
@@ -273,7 +274,7 @@ def parseWord(path, result):
     parseContent(title, desc, content)
 
 
-line_start = f"""^({"|".join(map(lambda x: f"({x})".replace(zh_nums, "一"), line_reg))})"""
+line_start = f"""^({"|".join(map(lambda x: f"({x})".replace(zh_nums, "一"), filter(lambda x: "节" not in x, line_reg)))})"""
 remove_sub = [
     "^（",
     "^\(",
@@ -345,8 +346,13 @@ def parseContent(title, desc: str, content):
 
     content = filtered_content
 
-    if spec_title:
+    if spec_title is not None:
         return
+
+    if len(content) == 0:
+        print("no content after filerted")
+        return
+
     with open(path, "w") as f:
         f.write("# " + title + "\n\n")
 
