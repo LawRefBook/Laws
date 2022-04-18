@@ -68,7 +68,8 @@ def requestPage(page: int):
         # ("zdjg", "4028814858b9b8e50158bed591680061&4028814858b9b8e50158bed64efb0065"), #河南
         # ("zdjg", "4028814858b9b8e50158bec45e9a002d&4028814858b9b8e50158bec500350031"), # 上海
         # ("zdjg", "4028814858b9b8e50158bec5c28a0035&4028814858b9b8e50158bec6abbf0039"), # 江苏
-        ("zdjg", "4028814858b9b8e50158bec7c42f003d&4028814858b9b8e50158beca3c590041"), # 浙江
+        # ("zdjg", "4028814858b9b8e50158bec7c42f003d&4028814858b9b8e50158beca3c590041"), # 浙江
+        ("zdjg", "4028814858b9b8e50158bed40f6d0059&4028814858b9b8e50158bed4987a005d"), # 山东
         ('searchType', 'title;accurate;1,5'),
         ('sortTr', 'f_bbrq_s;desc'),
         ('gbrqStart', ''),
@@ -169,8 +170,6 @@ def parseDetails(data):
 
     if len(files) == 0:
         return
-
-    print(files)
 
     target = files[0]
     if target["type"] == "WORD":
