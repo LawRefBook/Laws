@@ -38,6 +38,14 @@ def main():
 
         with open(f"./__cache__/out/{subtitle or title}.md", "w") as f:
             title and f.write(f"# {title}\n")
+            f.write("""
+消费者权益保护典型案例
+
+最高人民法院发布
+
+2022-03-15
+
+""")
             f.write(f"<!-- INFO END -->\n\n")
             subtitle and f.write(f"## {subtitle}\n")
             for i in range(2, len(case)):
