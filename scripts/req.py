@@ -50,7 +50,7 @@ def requestPage(page: int):
         ('page', str(page)),
         ('type', ''),
         # ('xlwj', ['02', '03', '04', '05', '06', '07', '08']),
-        # ("fgxlwj", "xzfg"), # 行政法规
+        ("fgxlwj", "xzfg"), # 行政法规
         ('searchType', 'title;accurate;1'),
         ('sortTr', 'f_bbrq_s;desc'),
         ('gbrqStart', ''),
@@ -62,25 +62,26 @@ def requestPage(page: int):
     )
 
     # 司法解释
-    params = (
-        # ('type', 'sfjs'),
-        # ("zdjg", "4028814858a4d78b0158a50f344e0048&4028814858a4d78b0158a50fa2ba004c"), #北京
-        # ("zdjg", "4028814858b9b8e50158bed591680061&4028814858b9b8e50158bed64efb0065"), #河南
-        # ("zdjg", "4028814858b9b8e50158bec45e9a002d&4028814858b9b8e50158bec500350031"), # 上海
-        # ("zdjg", "4028814858b9b8e50158bec5c28a0035&4028814858b9b8e50158bec6abbf0039"), # 江苏
-        # ("zdjg", "4028814858b9b8e50158bec7c42f003d&4028814858b9b8e50158beca3c590041"), # 浙江
-        ("zdjg", "4028814858b9b8e50158bed40f6d0059&4028814858b9b8e50158bed4987a005d"), # 山东
-        ('searchType', 'title;accurate;1,5'),
-        ('sortTr', 'f_bbrq_s;desc'),
-        ('gbrqStart', ''),
-        ('gbrqEnd', ''),
-        ('sxrqStart', ''),
-        ('sxrqEnd', ''),
-        ('sort', 'true'),
-        ('page', str(page)),
-        ('size', '10'),
-        ('_', 1647659481879),
-    )
+    # params = (
+    #     # ('type', 'sfjs'),
+    #     # ("zdjg", "4028814858a4d78b0158a50f344e0048&4028814858a4d78b0158a50fa2ba004c"), #北京
+    #     # ("zdjg", "4028814858b9b8e50158bed591680061&4028814858b9b8e50158bed64efb0065"), #河南
+    #     # ("zdjg", "4028814858b9b8e50158bec45e9a002d&4028814858b9b8e50158bec500350031"), # 上海
+    #     # ("zdjg", "4028814858b9b8e50158bec5c28a0035&4028814858b9b8e50158bec6abbf0039"), # 江苏
+    #     # ("zdjg", "4028814858b9b8e50158bec7c42f003d&4028814858b9b8e50158beca3c590041"), # 浙江
+    #     # ("zdjg", "4028814858b9b8e50158bed40f6d0059&4028814858b9b8e50158bed4987a005d"), # 山东
+    #     # ("zdjg", "4028814858b9b8e50158bef1d72600b9&4028814858b9b8e50158bef2706800bd"), # 陕西省
+    #     ('searchType', 'title;accurate;1,5'),
+    #     ('sortTr', 'f_bbrq_s;desc'),
+    #     ('gbrqStart', ''),
+    #     ('gbrqEnd', ''),
+    #     ('sxrqStart', ''),
+    #     ('sxrqEnd', ''),
+    #     ('sort', 'true'),
+    #     ('page', str(page)),
+    #     ('size', '10'),
+    #     ('_', 1647659481879),
+    # )
 
     hash_sum = sha1(json.dumps(params).encode()).hexdigest()
 
@@ -128,6 +129,8 @@ def fetchDeails(id: str):
 def fetchWord(path: str):
     filename = os.path.basename(path)
     if os.path.exists(f"./__cache__/words/{filename}"):
+        return
+    if not re.match(".*docx$", filename):
         return
     url = "https://wb.flk.npc.gov.cn" + path
     print("fetch", path)
