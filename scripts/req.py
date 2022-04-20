@@ -341,7 +341,7 @@ def parseContent(title, desc: str, content):
             break
 
         if not menu_start and not skip:
-            filtered_content.append(line)
+            filtered_content.append(line.strip())
 
         if skip and re.match("法释", line):
             skip = False
