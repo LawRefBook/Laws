@@ -51,7 +51,8 @@ def addMissingLaw():
     allLaws = set(
         filter(lambda x: x, [
             x for y in map(
-                lambda x: [x["name"], x["subtitle"] if "subtitle" in x else None, x["filename"] if "filename" in x else None],
+                lambda x: [x["name"], x["subtitle"] if "subtitle" in x else None,
+                           x["filename"] if "filename" in x else None],
                 laws
             ) for x in y
         ])
@@ -101,14 +102,18 @@ def cleanTitle(line: str):
 
     return re.sub(title_re, f, line)
 
+ignoreFiles = r"(_index|模版|README)"
 
 def clean():
     for filename in glob.glob("../**/*.md", recursive=True):
-        print(filename)
+        if re.search(ignoreFiles, filename):
+            continue
+
         with open(filename, "r") as f:
             data = f.readlines()
         flag = False
         for i, line in enumerate(data):
+            line = line.strip(" ")
             if not line.strip():
                 continue
             if line.startswith("#"):
@@ -122,10 +127,9 @@ def clean():
             if line.startswith("<!--"):
                 continue
 
-            line = cleanTitle(line)
-            data[i] = line
+            data[i] = cleanTitle(line)
 
-            if "../案例/" in filename:
+            if "../案例/" in filename and data[i].strip():
                 sentenses = data[i].split("。")
                 count = 0
                 newLine = ""
@@ -138,15 +142,17 @@ def clean():
                     if count >= 100:
                         newLine += "\n\n"
                         count = 0
-                data[i] = newLine + "\n"
-
-                spliced = line.split(" ", 1)
+                newLine += "\n"
+                data[i] = newLine
+                spliced = data[i].split(" ", 1)
                 if len(spliced) == 2 and " " in spliced[1]:
                     spliced[1] = spliced[1].replace(" ", "")
                     data[i] = " ".join(spliced)
 
         with open(filename, "w") as f:
-            f.writelines(data)
+            result = "\n".join(filter(lambda x: x.strip(), data))
+            result = re.sub("\n{2,}", "\n\n", result)
+            f.write(result.strip())
 
 
 def test():
