@@ -22,49 +22,39 @@ def isSection(line) -> bool:
             return True
     return False
 
+def isTitle(line) -> str:
+    if re.match(f"^{zh_nums}、", line):
+        return re.sub(f"^{zh_nums}、", "", line)
+    return None
+
+zh_nums = "[一二三四五六七八九十零百千万1234567890]+"
+
 def main():
     with open(f"./__cache__/{FILE_NAME}", "r") as f:
         data = f.read()
-    cases = list(filter(lambda x: x, map(
-        lambda x: x.strip(".\n "), re.split("案例\d{1,2}", data))))
 
+    lines = data.split("\n")
+    f = None
     jsonArr = []
-    for case in cases:
-        case = list(filter(lambda x: x, map(
-            lambda x: x.strip(), case.split("\n"))))
-        title = case[0]
-        subtitle = case[1].strip("——")
-        print(title)
 
-        with open(f"./__cache__/out/{subtitle or title}.md", "w") as f:
-            title and f.write(f"# {title}\n")
-            f.write("""
-消费者权益保护典型案例
-
-最高人民法院发布
-
-2022-03-15
-
-""")
-            f.write(f"<!-- INFO END -->\n\n")
-            subtitle and f.write(f"## {subtitle}\n")
-            for i in range(2, len(case)):
-                line = case[i]
-                if isSection(line):
-                    f.write(f"## {line}")
-                else:
-                    f.write(line)
-                f.write("\n\n")
-
-        data = {
-            "name": title,
-            "level": "案例",
-        }
-
-        if subtitle:
-            data["subtitle"] = subtitle
-
-        jsonArr.append(data)
+    for line in lines:
+        line = line.strip()
+        title = isTitle(line)
+        if title:
+            if f:
+                f.close()
+            f = open(f"./__cache__/out/{title}.md", "w")
+            f.write(f"# {title}\n")
+            f.write(f"<!-- INFO END -->")
+            jsonArr.append({
+                "name": title,
+                "level": "案例",
+            })
+        elif isSection(line):
+            f.write(f"## {line}")
+        else:
+            f.write(line)
+        f.write("\n")
 
     print(json.dumps(jsonArr, ensure_ascii=False, indent=2))
 
