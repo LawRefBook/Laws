@@ -125,10 +125,26 @@ def clean():
             line = cleanTitle(line)
             data[i] = line
 
-            spliced = line.split(" ", 1)
-            if len(spliced) == 2 and " " in spliced[1]:
-                spliced[1] = spliced[1].replace(" ", "")
-                data[i] = " ".join(spliced)
+            if "../案例/" in filename:
+                sentenses = data[i].split("。")
+                count = 0
+                newLine = ""
+                for sentense in sentenses:
+                    sentense = sentense.strip()
+                    if not sentense:
+                        continue
+                    count += len(sentense)
+                    newLine += sentense + "。"
+                    if count >= 100:
+                        newLine += "\n\n"
+                        count = 0
+                data[i] = newLine + "\n"
+
+                spliced = line.split(" ", 1)
+                if len(spliced) == 2 and " " in spliced[1]:
+                    spliced[1] = spliced[1].replace(" ", "")
+                    data[i] = " ".join(spliced)
+
         with open(filename, "w") as f:
             f.writelines(data)
 
