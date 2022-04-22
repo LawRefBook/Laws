@@ -49,9 +49,9 @@ def requestPage(page: int):
     params = (
         ('page', str(page)),
         ('type', ''),
-        # ('xlwj', ['02', '03', '04', '05', '06', '07', '08']),
-        ("fgxlwj", "xzfg"), # 行政法规
-        ('searchType', 'title;accurate;1'),
+        ('xlwj', ['02', '03', '04', '05', '06', '07', '08']),
+        # ("fgxlwj", "xzfg"), # 行政法规
+        ('searchType', 'title;accurate;3,1'),
         ('sortTr', 'f_bbrq_s;desc'),
         ('gbrqStart', ''),
         ('gbrqEnd', ''),
@@ -102,9 +102,9 @@ def requestPage(page: int):
     return ret
 
 
-def fetchDeails(id: str):
+def fetchDeails(id: str, force = False):
     path = f"./__cache__/req_cache/{id}.json"
-    if os.path.exists(path):
+    if os.path.exists(path) and not force:
         with open(path, "r") as f:
             return json.load(f)
 
@@ -145,13 +145,13 @@ def parse(arr):
         title = re.sub("^中华人民共和国", "", item["title"])
         if spec_title and spec_title != title:
             continue
-        if title in exists:
-            continue
         skip = bool(re.search(r"的(决定|复函|批复|答复|批复)$", title))
         print("T" if skip else "F",title)
         if skip:
             continue
         ret = fetchDeails(page_id)
+        if ret["result"]["publish"] != item["publish"]:
+            ret = fetchDeails(page_id, True)
         try:
             print("paring", title)
             parseDetails(ret)
