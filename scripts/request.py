@@ -8,7 +8,7 @@ from enum import Enum
 from glob import glob
 from hashlib import sha1
 from pathlib import Path
-from time import sleep
+from time import sleep, time
 from typing import Any, List, Tuple
 
 import requests
@@ -142,10 +142,11 @@ class RequestManager(object):
     def __init__(self) -> None:
         self.cache = CacheManager()
         self.params = []
+        self.req_time = 1647659481879
 
     def getLawList(self, page=1):
         params = self.params + [
-            ('searchType', 'title;accurate;1,3'),
+            ('searchType', 'title;accurate;1'),
             ('sortTr', 'f_bbrq_s;desc'),
             ('gbrqStart', ''),
             ('gbrqEnd', ''),
@@ -154,7 +155,7 @@ class RequestManager(object):
             ('sort', 'true'),
             ('page', str(page)),
             ('size', '10'),
-            ('_', 1647659481879)
+            ('_', self.req_time)
         ]
 
         cache_key = sha1(json.dumps(params).encode()).hexdigest()
@@ -248,6 +249,7 @@ class WordParser(Parser):
     def parse(self, result, detail) -> Tuple[str, str, List[str]]:
         document = self.request.get_word(detail["path"])
         if not document:
+            logger.warning(f"document {detail['path']} not exists")
             return
 
         title = result["title"].strip()
@@ -269,7 +271,7 @@ class WordParser(Parser):
         hasDesc = False
         for n, line in enumerate(lines):
             # 信息行
-            if re.match(r"^[（\(]\d{4,4}年\d{1,2}月\d{1,2}日", line):
+            if re.match(r"[（\(]\d{4,4}年\d{1,2}月\d{1,2}日", line):
                 isDesc = True
                 hasDesc = True
 
@@ -472,7 +474,7 @@ class LawDatabase(object):
         return files
 
     def is_bypassed_law(self, item) -> bool:
-        title = re.sub("^中华人民共和国", "", item["title"])
+        title = item["title"].replace("中华人民共和国", "")
         if self.spec_title and title in self.spec_title:
             return False
         if re.search(r"的(决定|复函|批复|答复|批复)$", title):
@@ -510,7 +512,7 @@ class LawDatabase(object):
         self.cache.write_law(output_path, filedata)
 
     def __get_law_output_path(self, title) -> Path:
-        title = re.sub("^中华人民共和国", "", title)
+        title = title.replace("中华人民共和国", "")
         ret = Path(".")
         for category in self.categories:
             if title in category["title"]:
@@ -535,7 +537,7 @@ if __name__ == "__main__":
     req = LawDatabase()
     req.request.params = [
         # ('xlwj', ['02', '03', '04', '05', '06', '07', '08']),  # 法律法规
-        # ("fgbt", "香港特别行政区基本法"),
+        # ("fgbt", "中华人民共和国澳门特别行政区基本法"),
         ("fgxlwj", "xzfg"),  # 行政法规
         # ('type', 'sfjs'),
         # ("zdjg", "4028814858a4d78b0158a50f344e0048&4028814858a4d78b0158a50fa2ba004c"), #北京
@@ -546,5 +548,7 @@ if __name__ == "__main__":
         # ("zdjg", "4028814858b9b8e50158bed40f6d0059&4028814858b9b8e50158bed4987a005d"),  # 山东
         # ("zdjg", "4028814858b9b8e50158bef1d72600b9&4028814858b9b8e50158bef2706800bd"), # 陕西省
     ]
+    # req.request.req_time = 1647659481879
+    # req.request.req_time = int(time() * 1000)
     # req.spec_title = "反有组织犯罪法"
     req.run()

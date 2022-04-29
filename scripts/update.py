@@ -48,6 +48,8 @@ def find_difference(laws, local_laws):
 
 
 def get_level(folder):
+    if "/" in folder:
+        folder = folder.split("/")[0]
     if folder in ["司法解释", "地方性法规", "案例", "其他", "行政法规"]:
         return folder
     return "法律"
