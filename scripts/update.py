@@ -97,7 +97,7 @@ def main():
                 print(f"不存在 {law}")
 
     with open("../data.json", "w") as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
+        json.dump(data, f, ensure_ascii=False, indent=4, sort_keys=True)
 
 
 if __name__ == "__main__":

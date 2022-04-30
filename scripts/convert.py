@@ -4,9 +4,12 @@
 
 import re
 import json
+from typing import List
+from uuid import uuid4
 
-FILE_NAME = "最高法发布消费者权益保护典型.txt"
 section = [
+    "案情回顾",
+    "法官解读",
     "基本案情",
     "申请人请求",
     "原告诉讼请求",
@@ -17,21 +20,22 @@ section = [
     "裁判要点",
     "简要案情",
     "法院裁判",
+    "裁判要旨",
+    "适用解析",
     "司法解释相关法条",
 ]
+
+zh_nums = "[一二三四五六七八九十零百千万1234567890]+"
+title_matcher = f"((?:^{zh_nums}、)|(?:^案例{zh_nums}))"
 
 
 def isSection(line) -> bool:
     line = line.strip()
     for pattern in section:
-        flag = re.search("^[【\(（]{0,1}" + pattern +"[】\)）]{0,1}$", line)
+        flag = re.search("^[【\(（]{0,1}" + pattern + "[】\)）]{0,1}$", line)
         if flag:
             return True
     return False
-
-
-zh_nums = "[一二三四五六七八九十零百千万1234567890]+"
-title_matcher = f"((?:^{zh_nums}、)|(?:^案例{zh_nums}))"
 
 
 def isTitle(line) -> str:
@@ -40,58 +44,97 @@ def isTitle(line) -> str:
     return None
 
 
-def main():
-    with open(f"./__cache__/{FILE_NAME}", "r") as f:
-        data = f.read()
+class Case(object):
 
-    lines = data.split("\n")
-    f = None
-    title_no = 0
-    jsonArr = []
-    info_end = False
+    def __init__(self) -> None:
+        self.title = None
+        self.subtitle = None
+        self.content: List[str] = []
 
-    case_title = ""
-    sub_title = ""
+    @property
+    def filename(self) -> str:
+        return self.subtitle or self.title
 
-    lines = filter(lambda x: x, map(lambda x: x.strip(), lines))
+    def __repr__(self) -> str:
+        return f"<Case {self.filename} {len(self.content)}>"
 
-    for i, line in enumerate(lines):
-        line = line.strip()
-        if not line:
-            continue
-        title = isTitle(line)
-        if title:
-            print(title)
-            if f:
-                data = {
-                    "name": case_title,
-                    "level": "案例",
-                }
-                if sub_title:
-                    data["subtitle"] = sub_title
-                jsonArr.append(data)
-                f.close()
-            title_no = i
-            f = open(f"./__cache__/out/{title}.md", "w")
-            f.write(f"# {title}\n")
-            case_title = title
-            sub_title = ""
-            info_end = False
-        elif i == title_no + 1 and line.startswith("-"):
-            sub_title = line.strip("-")
-            f.write(f"# {sub_title}\n")
-        elif f:
-            if not info_end:
-                f.write(f"<!-- INFO END -->")
-                info_end = True
+    __str__ = __repr__
+
+
+class CasesParser(object):
+
+    def __init__(self) -> None:
+        self.filename = "./__cache__/案例.txt"
+
+    def __slice_content(self, content: str) -> List[str]:
+        ret = []
+
+        for line in content.split("。"):
+            if len(ret) == 0 or len(ret[-1]) + len(line) > 200:
+                if len(ret) > 0:
+                    ret[-1] += "。"
+                ret.append("")
+
+            if ret[-1]:
+                ret[-1] += "。"
+            ret[-1] += line
+
+        return ret
+
+    def parse(self) -> List[Case]:
+        with open(self.filename, "r") as f:
+            data = filter(
+                lambda x: x,
+                map(
+                    lambda x: x.strip(),
+                    f.readlines()
+                )
+            )
+
+        cases: List[Case] = []
+        title_at = 0
+        for no, line in enumerate(data):
+            newCase = isTitle(line)
+            if len(cases) == 0 or newCase:
+                cases.append(Case())
+            case = cases[-1]
+            if title := isTitle(line):
+                case.title = title
+                title_at = no
+                continue
+            if no == title_at + 1 and re.match(r"^[——-]", line):
+                case.subtitle = line.strip("——-")
+                continue
+
             if isSection(line):
-                f.write(f"## {line.strip('【】')}")
+                case.content.append(f"## {line.strip('【】')}")
             else:
-                f.write(line)
-        f.write("\n")
+                case.content += self.__slice_content(line)
+        return cases
 
-    print(json.dumps(jsonArr, ensure_ascii=False, indent=2))
+    def write(self, cases: List[Case]):
+        ret_json = []
+        for case in cases:
+            case_json = {
+                "name": case.title,
+                "level": "案例",
+                "id": str(uuid4()),
+            }
+            if case.subtitle:
+                case_json["subtitle"] = case.subtitle
+            ret_json.append(case_json)
+            with open(f"./__cache__/out/{case.filename}.md", "w") as f:
+                contents = [
+                    f"# {case.title}",
+                    "<!-- INFO END -->",
+                ]
+                if case.subtitle:
+                    contents.append(f"## {case.subtitle}")
+                f.write("\n\n".join(contents + case.content))
+        print(json.dumps(ret_json, ensure_ascii=False, indent=4, sort_keys=True))
 
 
 if __name__ == "__main__":
-    main()
+    parser = CasesParser()
+    cases = parser.parse()
+    parser.write(cases)
