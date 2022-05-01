@@ -47,6 +47,10 @@ class Law(BaseModel):
 
     category_id = peewee.ForeignKeyField(Category, backref="laws")
 
+    def __repr__(self) -> str:
+        return f"<Law {self.name}>"
+
+    __str__ = __repr__
 
 class LawDatabase(object):
 
