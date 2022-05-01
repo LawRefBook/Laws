@@ -582,13 +582,13 @@ def main():
 
     args = sys.argv[1:]
     if args:
-        req.parse_file(args[0])
+        req.parse_file(args[0], args[1])
         return
 
     req.request.params = [
         # ('xlwj', ['02', '03', '04', '05', '06', '07', '08']),  # 法律法规
-        # ("fgbt", "中华人民共和国澳门特别行政区基本法"),
-        ("fgxlwj", "xzfg"),  # 行政法规
+        ("fgbt", "最高人民法院、最高人民检察院关于修改《关于办理妨害信用卡管理刑事案件具体应用法律若干问题的解释》的决定"),
+        # ("fgxlwj", "xzfg"),  # 行政法规
         # ('type', 'sfjs'),
         # ("zdjg", "4028814858a4d78b0158a50f344e0048&4028814858a4d78b0158a50fa2ba004c"), #北京
         # ("zdjg", "4028814858b9b8e50158bed591680061&4028814858b9b8e50158bed64efb0065"), #河南
