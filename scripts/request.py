@@ -2,13 +2,14 @@ import json
 import logging
 import os
 import re
+import sys
 import urllib.request
 from abc import ABC, abstractmethod
 from enum import Enum
 from glob import glob
 from hashlib import sha1
 from pathlib import Path
-from time import sleep, time
+from time import sleep
 from typing import Any, List, Tuple
 
 import requests
@@ -143,10 +144,11 @@ class RequestManager(object):
         self.cache = CacheManager()
         self.params = []
         self.req_time = 1647659481879
+        self.searchType = "1"
 
     def getLawList(self, page=1):
         params = self.params + [
-            ('searchType', 'title;accurate;1'),
+            ('searchType', f'title;accurate;{self.searchType}'),
             ('sortTr', 'f_bbrq_s;desc'),
             ('gbrqStart', ''),
             ('gbrqEnd', ''),
@@ -511,6 +513,18 @@ class LawDatabase(object):
         logger.debug(f"parsing {title} success")
         self.cache.write_law(output_path, filedata)
 
+    def parse_file(self, file_path):
+        result = {}
+        with open(file_path, "r") as f:
+            data = list(filter(lambda x: x, map(lambda x: x.strip(), f.readlines())))
+        title = data[0]
+        filedata = self.content_parser.parse(result, title, data[1], data[2:])
+        if not filedata:
+            return
+        output_path = self.__get_law_output_path(title)
+        logger.debug(f"parsing {title} success")
+        self.cache.write_law(output_path, filedata)
+
     def __get_law_output_path(self, title) -> Path:
         title = title.replace("中华人民共和国", "")
         ret = Path(".")
@@ -519,6 +533,14 @@ class LawDatabase(object):
                 ret = ret / category["category"]
                 break
         return ret / (title + ".md")
+
+    def lawList(self):
+        for i in range(1, 60):
+            ret = self.request.getLawList(i)
+            arr = ret["result"]["data"]
+            if len(arr) == 0:
+                break
+            yield from arr
 
     def run(self):
         for i in range(1, 60):
@@ -533,8 +555,15 @@ class LawDatabase(object):
                     exit(1)
 
 
-if __name__ == "__main__":
+def main():
+
     req = LawDatabase()
+
+    args = sys.argv[1:]
+    if args:
+        req.parse_file(args[0])
+        return
+
     req.request.params = [
         # ('xlwj', ['02', '03', '04', '05', '06', '07', '08']),  # 法律法规
         # ("fgbt", "中华人民共和国澳门特别行政区基本法"),
@@ -552,3 +581,7 @@ if __name__ == "__main__":
     # req.request.req_time = int(time() * 1000)
     # req.spec_title = "反有组织犯罪法"
     req.run()
+
+
+if __name__ == "__main__":
+    main()

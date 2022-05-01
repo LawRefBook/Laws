@@ -4,6 +4,8 @@ from functools import reduce
 import re
 from uuid import uuid4
 
+import request
+
 
 def find_laws():
     bypass = ["scripts"]
@@ -100,5 +102,41 @@ def main():
         json.dump(data, f, ensure_ascii=False, indent=4, sort_keys=True)
 
 
+def update_status():
+    params = [
+        ('xlwj', ['02', '03', '04', '05', '06', '07', '08']),  # 法律法规
+        # ("fgbt", "中华人民共和国澳门特别行政区基本法"),
+        # ("fgxlwj", "xzfg"),  # 行政法规
+        # ('type', 'sfjs'),
+        # ("zdjg", "4028814858a4d78b0158a50f344e0048&4028814858a4d78b0158a50fa2ba004c"), #北京
+        # ("zdjg", "4028814858b9b8e50158bed591680061&4028814858b9b8e50158bed64efb0065"), #河南
+        # ("zdjg", "4028814858b9b8e50158bec45e9a002d&4028814858b9b8e50158bec500350031"), # 上海
+        # ("zdjg", "4028814858b9b8e50158bec5c28a0035&4028814858b9b8e50158bec6abbf0039"), # 江苏
+        # ("zdjg", "4028814858b9b8e50158bec7c42f003d&4028814858b9b8e50158beca3c590041"), # 浙江
+        # ("zdjg", "4028814858b9b8e50158bed40f6d0059&4028814858b9b8e50158bed4987a005d"),  # 山东
+        # ("zdjg", "4028814858b9b8e50158bef1d72600b9&4028814858b9b8e50158bef2706800bd"), # 陕西省
+    ]
+    with open("../data.json", "r") as f:
+        data = json.load(f)
+        lawMap = {
+            x: y for (x, y) in map(
+                lambda x: (x["name"], x),
+                reduce(lambda x, y: x + y["laws"], data, [])
+            )
+        }
+    db = request.LawDatabase()
+    db.request.searchType = "1,3,5,9"
+    for param in params:
+        db.request.params = [param]
+        for law in db.lawList():
+            title = law["title"].replace("中华人民共和国", "")
+            if title in lawMap and "status" in law:
+                lawMap[title]["status"] = int(law["status"])
+
+    with open("../data.json", "w") as f:
+        json.dump(data, f, ensure_ascii=False, indent=4, sort_keys=True)
+
+
 if __name__ == "__main__":
     main()
+    # update_status()
