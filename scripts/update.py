@@ -2,10 +2,11 @@ import json
 from pathlib import Path
 from functools import reduce
 import re
-import shutil
 from uuid import uuid4
 
 import request
+import database
+law_db = database.LawDatabase()
 
 
 def find_laws():
@@ -26,7 +27,7 @@ def find_laws():
                 break
         if bypass_flag:
             continue
-        d = (folder, file.parts[-1].split(".")[0])
+        d = (folder, file.parts[-1].replace(".md", ""))
         ret.append(d)
     return ret
 
@@ -88,11 +89,20 @@ def main():
             print(f"category {category} not found")
             continue
 
-        category["laws"].append({
-            "name": name,
-            "id": str(uuid4()),
-            "level": get_level(folder)
-        })
+        if "." in name:
+            name, pub_at = name.split(".")
+            category["laws"].append({
+                "name": name,
+                "publish": pub_at,
+                "id": str(uuid4()),
+                "level": get_level(folder)
+            })
+        else:
+            category["laws"].append({
+                "name": name,
+                "id": str(uuid4()),
+                "level": get_level(folder)
+            })
 
     for category in data:
         for law in category["laws"]:
@@ -117,38 +127,30 @@ def update_status():
         # ("zdjg", "4028814858b9b8e50158bed40f6d0059&4028814858b9b8e50158bed4987a005d"),  # 山东
         # ("zdjg", "4028814858b9b8e50158bef1d72600b9&4028814858b9b8e50158bef2706800bd"), # 陕西省
     ]
-    with open("../data.json", "r") as f:
-        data = json.load(f)
-        lawMap = {
-            x: y for (x, y) in map(
-                lambda x: (x["name"], x),
-                reduce(lambda x, y: x + y["laws"], data, [])
-            )
-        }
-    db = request.LawDatabase()
+    db = request.LawParser()
     db.request.searchType = "1,9"
     for param in params:
         db.request.params = [param]
         for law in db.lawList():
             title = law["title"].replace("中华人民共和国", "")
-            if title in lawMap and "status" in law:
+            if title not in lawMap:
+                continue
+            if "publish" in law and "publish" in lawMap[title]:
+                law_pub_at = law["publish"].split(" ")[0].replace("-", "")
+                local_at = lawMap[title]["publish"]
+                if law_pub_at != local_at:
+                    continue
+            if "status" in law:
+                print(title, law_pub_at, local_at, law["status"])
                 if int(law["status"]) == 9:
                     lawMap[title]["expired"] = True
 
-    with open("../data.json", "w") as f:
-        json.dump(data, f, ensure_ascii=False, indent=4, sort_keys=True)
-
-
-def rename_files():
-    base_path = Path("../")
-    for folder, law in find_laws():
-        clean_title = law.replace("中华人民共和国", "")
-        file_path = base_path / folder / f"{law}.md"
-        to_path = base_path / folder / f"{clean_title}.md"
-        shutil.move(file_path, to_path)
+    # with open("../data.json", "w") as f:
+    #     json.dump(data, f, ensure_ascii=False, indent=4, sort_keys=True)
 
 
 if __name__ == "__main__":
+    # remove_duplicate()
+    update_filename()
     main()
     update_status()
-    rename_files()

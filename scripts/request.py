@@ -7,7 +7,7 @@ import urllib.request
 from abc import ABC, abstractmethod
 from enum import Enum
 from glob import glob
-from hashlib import sha1
+from hashlib import md5, sha1
 from pathlib import Path
 from time import sleep
 from typing import Any, List, Tuple
@@ -15,6 +15,8 @@ from typing import Any, List, Tuple
 import requests
 from bs4 import BeautifulSoup
 from docx import Document
+
+import database
 
 logger = logging.getLogger("Law")
 logger.setLevel(logging.DEBUG)
@@ -376,7 +378,8 @@ class ContentParser(object):
         return filtered_content
 
     def __filter_desc(self, desc: str) -> List[str]:
-        desc_arr = re.findall(r"(\d{4}年\d{1,2}月\d{1,2}日.*?(?:(?:根据)|(?:通过)|(?:公布)|(?:施行)|(?:）)|(?:　)))", desc)
+        desc_arr = re.findall(
+            r"(\d{4}年\d{1,2}月\d{1,2}日.*?(?:(?:根据)|(?:通过)|(?:公布)|(?:施行)|(?:）)|(?:　)))", desc)
         desc_arr = map(
             lambda line: re.sub("^(\d{4,4}年\d{1,2}月\d{1,2}日)",
                                 lambda x: x.group(0) + " ", line),
@@ -423,17 +426,11 @@ class ContentParser(object):
         return ret
 
 
-class LawDatabase(object):
+class LawParser(object):
 
     def __init__(self) -> None:
         self.request = RequestManager()
         self.spec_title = None
-        self.local_law = {
-            x: y for x, y in map(
-                lambda z: (os.path.basename(z).split(".")[0], z),
-                glob("../**/*.md", recursive=True)
-            )
-        }
         self.parser = [
             HTMLParser(),
             WordParser(),
@@ -441,6 +438,7 @@ class LawDatabase(object):
         self.content_parser = ContentParser()
         self.cache = CacheManager()
         self.categories = []
+        self.db = database.LawDatabase()
         self.__init()
 
     def __init(self):
@@ -485,13 +483,14 @@ class LawDatabase(object):
             return False
         if re.search(r"的(决定|复函|批复|答复|批复)$", title):
             return True
-        if title in self.local_law:
+        if self.db.get_laws(title, item["publish"]):
             return True
-        if title in self.local_law:
-            return self.update_law(item) != 1
         return False
 
     def parse_law(self, item):
+        if "publish" in item and item["publish"]:
+            item["publish"] = item["publish"].split(" ")[0]
+
         detail = self.request.get_law_detail(item["id"])
         result = detail["result"]
         title = result['title']
@@ -499,11 +498,13 @@ class LawDatabase(object):
         logger.debug(f"parsing {title}")
         if len(files) == 0:
             return
+
         target_file = files[0]
         parser: Parser = find(
             lambda x: x == target_file["type"],
             self.parser
         )
+
         ret = parser.parse(result, target_file)
         if not ret:
             logger.error(f"parsing {title} error")
@@ -513,11 +514,12 @@ class LawDatabase(object):
         filedata = self.content_parser.parse(result, title, desc, content)
         if not filedata:
             return
-        output_path = self.__get_law_output_path(title)
+
+        output_path = self.__get_law_output_path(title, item["publish"])
         logger.debug(f"parsing {title} success")
         self.cache.write_law(output_path, filedata)
 
-    def parse_file(self, file_path):
+    def parse_file(self, file_path, publish_at=None):
         result = {}
         with open(file_path, "r") as f:
             data = list(filter(lambda x: x, map(
@@ -526,18 +528,30 @@ class LawDatabase(object):
         filedata = self.content_parser.parse(result, title, data[1], data[2:])
         if not filedata:
             return
-        output_path = self.__get_law_output_path(title)
+        output_path = self.__get_law_output_path(title, publish_at)
         logger.debug(f"parsing {title} success")
         self.cache.write_law(output_path, filedata)
 
-    def __get_law_output_path(self, title) -> Path:
+    def get_file_hash(self, title, publish_at=None) -> str:
+        _hash = md5()
+        _hash.update(title.encode("utf8"))
+        if publish_at:
+            _hash.update(publish_at.encode("utf8"))
+        return _hash.digest().hex()[0:8]
+
+    def __get_law_output_path(self, title, publish_at: str) -> Path:
         title = title.replace("中华人民共和国", "")
         ret = Path(".")
         for category in self.categories:
             if title in category["title"]:
                 ret = ret / category["category"]
                 break
-        return ret / (title + ".md")
+        # hash_hex = self.get_file_hash(title, publish_at)
+        if publish_at:
+            output_name = f"{title}({publish_at}).md"
+        else:
+            output_name = f"{title}.md"
+        return ret / output_name
 
     def lawList(self):
         for i in range(1, 60):
@@ -555,8 +569,8 @@ class LawDatabase(object):
                 break
             arr = filter(lambda x: not self.is_bypassed_law(x), arr)
             for item in arr:
-                if item["status"] == "9":
-                    continue
+                # if item["status"] == "9":
+                    # continue
                 self.parse_law(item)
                 if self.spec_title is not None:
                     exit(1)
@@ -564,7 +578,7 @@ class LawDatabase(object):
 
 def main():
 
-    req = LawDatabase()
+    req = LawParser()
 
     args = sys.argv[1:]
     if args:
