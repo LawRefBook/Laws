@@ -71,6 +71,9 @@ class LawDatabase(object):
             expr = expr & (Law.publish == publish_at)
         return Law.select().where(expr)
 
+    def delete_law(self, id):
+        Law.delete_by_id(id)
+
     def create_law(self, name: str, category: Category, level: str, publish_at: str = None, id=None) -> Law:
         try:
             params = {
@@ -118,8 +121,7 @@ def get_laws():
 
 law_db = LawDatabase()
 
-
-def recover():
+def update_database():
     with open("../data.json", "r") as f:
         data = json.load(f)
     lawMap = {
@@ -128,26 +130,6 @@ def recover():
             reduce(lambda x, y: x + y["laws"], data, [])
         )
     }
-
-    for folder, file in get_laws():
-        category = law_db.get_or_create_category(folder)
-        pub_at = None
-        name = file
-        if "." in file:
-            name, pub_at = file.split(".")
-            pub_at = f"{pub_at[:4]}-{pub_at[4:6]}-{pub_at[6:]}"
-        param = {
-            "name": name,
-            "category": category,
-            "level": get_law_level_by_folder(folder),
-            "publish_at": pub_at,
-        }
-        if name in lawMap:
-            param["id"] = lawMap[name]["id"]
-        law = law_db.create_law(**param)
-
-
-def update_database():
     for folder, f in get_laws():
         category = law_db.get_or_create_category(folder)
         ret = re.search("\((\d{4,4}\-\d{2,2}\-\d{2,2})\)", f)
@@ -165,6 +147,11 @@ def update_database():
             "level": get_law_level_by_folder(folder),
             "publish_at": pub_at,
         }
+
+        if name in lawMap:
+            param["id"] = lawMap[name]["id"]
+            law_db.delete_law(param["id"])
+
         law = law_db.create_law(**param)
 
 
@@ -214,5 +201,6 @@ if __name__ == "__main__":
     # db.drop_tables(tables)
     # db.create_tables(tables)
     # recover()
+    update_status()
     update_database()
     update_status()
