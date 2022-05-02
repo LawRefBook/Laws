@@ -32,7 +32,7 @@ class Category(BaseModel):
     name = peewee.TextField()
     folder = peewee.TextField()
     isSubFolder = peewee.BooleanField(default=False)
-    group = peewee.TextField(null=True)
+    u = peewee.TextField(null=True)
 
 
 class Law(BaseModel):
