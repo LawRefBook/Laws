@@ -585,9 +585,10 @@ def main():
         req.parse_file(args[0], args[1])
         return
 
+    req.request.searchType = "1"
     req.request.params = [
         # ('xlwj', ['02', '03', '04', '05', '06', '07', '08']),  # 法律法规
-        ("fgbt", "最高人民法院、最高人民检察院关于修改《关于办理妨害信用卡管理刑事案件具体应用法律若干问题的解释》的决定"),
+        ("fgbt", "上海市住宅物业管理规定"),
         # ("fgxlwj", "xzfg"),  # 行政法规
         # ('type', 'sfjs'),
         # ("zdjg", "4028814858a4d78b0158a50f344e0048&4028814858a4d78b0158a50fa2ba004c"), #北京

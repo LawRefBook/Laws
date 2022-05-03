@@ -10,7 +10,7 @@ import peewee
 
 import request
 
-db = peewee.SqliteDatabase('../laws.db')
+db = peewee.SqliteDatabase('../db.sqlite3')
 
 
 def get_law_level_by_folder(folder: str) -> str:
@@ -32,7 +32,8 @@ class Category(BaseModel):
     name = peewee.TextField()
     folder = peewee.TextField()
     isSubFolder = peewee.BooleanField(default=False)
-    u = peewee.TextField(null=True)
+    group = peewee.TextField(null=True)
+    order = peewee.IntegerField()
 
 
 class Law(BaseModel):
@@ -40,10 +41,12 @@ class Law(BaseModel):
     id = peewee.UUIDField(primary_key=True, default=uuid4)
     level = peewee.TextField()
     name = peewee.TextField(index=True)
+    subtitle = peewee.TextField(null=True)
 
     filename = peewee.TextField(null=True)
     publish = peewee.DateField(formats='%Y-%m-%d', null=True)
     expired = peewee.BooleanField(default=False)
+    order = peewee.IntegerField(null=True)
 
     category_id = peewee.ForeignKeyField(Category, backref="laws")
 
@@ -193,4 +196,4 @@ if __name__ == "__main__":
     # db.create_tables(tables)
     # recover()
     update_database()
-    update_status()
+    # update_status()
