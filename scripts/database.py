@@ -45,6 +45,7 @@ class Law(BaseModel):
 
     filename = peewee.TextField(null=True)
     publish = peewee.DateField(formats='%Y-%m-%d', null=True)
+    valid_from = peewee.DateField(formats='%Y-%m-%d', null=True)
     expired = peewee.BooleanField(default=False)
     order = peewee.IntegerField(null=True)
 
@@ -154,7 +155,7 @@ def update_status():
         # ('xlwj', ['02', '03', '04', '05', '06', '07', '08']),  # 法律法规
         # ("fgbt", "中华人民共和国澳门特别行政区基本法"),
         ("fgxlwj", "xzfg"),  # 行政法规
-        # ('type', 'sfjs'),
+        ('type', 'sfjs'),
         ("zdjg", "4028814858a4d78b0158a50f344e0048&4028814858a4d78b0158a50fa2ba004c"), #北京
         ("zdjg", "4028814858b9b8e50158bed591680061&4028814858b9b8e50158bed64efb0065"), #河南
         ("zdjg", "4028814858b9b8e50158bec45e9a002d&4028814858b9b8e50158bec500350031"), # 上海
@@ -164,7 +165,7 @@ def update_status():
         # ("zdjg", "4028814858b9b8e50158bef1d72600b9&4028814858b9b8e50158bef2706800bd"), # 陕西省
     ]
 
-    adding_pub = True
+    adding_pub = False
 
     req = request.LawParser()
     req.request.searchType = "1,9"
@@ -174,17 +175,21 @@ def update_status():
             title = item["title"].replace("中华人民共和国", "")
             if "publish" in item and item["publish"]:
                 item["publish"] = item["publish"].split(" ")[0]
+            if "expiry" in item and item["expiry"]:
+                item["expiry"] = item["expiry"].split(" ")[0]
             if adding_pub:
                 laws = law_db.get_laws(title)
             else:
                 laws = law_db.get_laws(title, item["publish"])
             if not laws:
+                print(f"{title} 不存在")
                 continue
             if len(laws) != 1:
                 print(f"{title} 存在两份数据，请手动处理")
                 continue
             law = laws[0]
-            law.publish = item["publish"]
+            law.publish = item["publish"].strip()
+            law.valid_from = item["expiry"].strip()
             law.expired = int(item["status"]) == 9
             law.save()
             print("saved", law)
@@ -196,4 +201,4 @@ if __name__ == "__main__":
     # db.create_tables(tables)
     # recover()
     update_database()
-    # update_status()
+    update_status()

@@ -9,7 +9,7 @@ from enum import Enum
 from glob import glob
 from hashlib import md5, sha1
 from pathlib import Path
-from time import sleep
+from time import sleep, time
 from typing import Any, List, Tuple
 
 import requests
@@ -488,9 +488,6 @@ class LawParser(object):
         return False
 
     def parse_law(self, item):
-        if "publish" in item and item["publish"]:
-            item["publish"] = item["publish"].split(" ")[0]
-
         detail = self.request.get_law_detail(item["id"])
         result = detail["result"]
         title = result['title']
@@ -562,13 +559,16 @@ class LawParser(object):
             yield from arr
 
     def run(self):
-        for i in range(1, 60):
+        for i in range(1, 2):
             ret = self.request.getLawList(i)
             arr = ret["result"]["data"]
             if len(arr) == 0:
                 break
-            arr = filter(lambda x: not self.is_bypassed_law(x), arr)
             for item in arr:
+                if "publish" in item and item["publish"]:
+                    item["publish"] = item["publish"].split(" ")[0]
+                if self.is_bypassed_law(item):
+                    continue
                 # if item["status"] == "9":
                     # continue
                 self.parse_law(item)
@@ -584,11 +584,10 @@ def main():
     if args:
         req.parse_file(args[0], args[1])
         return
-
-    req.request.searchType = "1"
+    req.request.searchType = "1,3"
     req.request.params = [
-        # ('xlwj', ['02', '03', '04', '05', '06', '07', '08']),  # 法律法规
-        ("fgbt", "上海市住宅物业管理规定"),
+        ('xlwj', ['02', '03', '04', '05', '06', '07', '08']),  # 法律法规
+        # ("fgbt", "上海市住宅物业管理规定"),
         # ("fgxlwj", "xzfg"),  # 行政法规
         # ('type', 'sfjs'),
         # ("zdjg", "4028814858a4d78b0158a50f344e0048&4028814858a4d78b0158a50fa2ba004c"), #北京
@@ -600,7 +599,7 @@ def main():
         # ("zdjg", "4028814858b9b8e50158bef1d72600b9&4028814858b9b8e50158bef2706800bd"), # 陕西省
     ]
     # req.request.req_time = 1647659481879
-    # req.request.req_time = int(time() * 1000)
+    req.request.req_time = int(time() * 1000)
     # req.spec_title = "反有组织犯罪法"
     req.run()
 
