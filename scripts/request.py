@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+import enum
 import json
 import logging
 import os
@@ -586,7 +588,8 @@ def main():
         return
     req.request.searchType = "1,3"
     req.request.params = [
-        ('xlwj', ['02', '03', '04', '05', '06', '07', '08']),  # 法律法规
+        ("type", "公安部规章")
+        # ('xlwj', ['02', '03', '04', '05', '06', '07', '08']),  # 法律法规
         # ("fgbt", "上海市住宅物业管理规定"),
         # ("fgxlwj", "xzfg"),  # 行政法规
         # ('type', 'sfjs'),
@@ -599,7 +602,7 @@ def main():
         # ("zdjg", "4028814858b9b8e50158bef1d72600b9&4028814858b9b8e50158bef2706800bd"), # 陕西省
     ]
     # req.request.req_time = 1647659481879
-    req.request.req_time = int(time() * 1000)
+    # req.request.req_time = int(time() * 1000)
     # req.spec_title = "反有组织犯罪法"
     req.run()
 

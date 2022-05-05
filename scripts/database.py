@@ -201,4 +201,4 @@ if __name__ == "__main__":
     # db.create_tables(tables)
     # recover()
     update_database()
-    update_status()
+    # update_status()
