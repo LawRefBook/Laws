@@ -1,3 +1,4 @@
+from collections import defaultdict
 import json
 import re
 from datetime import datetime
@@ -48,6 +49,7 @@ class Law(BaseModel):
     valid_from = peewee.DateField(formats='%Y-%m-%d', null=True)
     expired = peewee.BooleanField(default=False)
     order = peewee.IntegerField(null=True)
+    ver = peewee.IntegerField(null=False, default=0)
 
     category_id = peewee.ForeignKeyField(Category, backref="laws")
 
@@ -55,6 +57,7 @@ class Law(BaseModel):
         return f"<Law {self.name}>"
 
     __str__ = __repr__
+
 
 class LawDatabase(object):
 
@@ -71,13 +74,17 @@ class LawDatabase(object):
             "folder": folder
         })
 
-    def get_laws(self, name: str, publish_at: datetime | str = None) -> List[Law]:
+    def get_laws(self, name: str = None, publish_at: datetime | str = None) -> List[Law]:
         if publish_at and isinstance(publish_at, datetime):
             publish_at = publish_at.strftime('%Y-%m-%d')
-        expr = (Law.name == name)
+        expr = None
+        if name:
+            expr = Law.name == name
         if publish_at:
             expr = expr & (Law.publish == publish_at)
-        return Law.select().where(expr)
+        if expr:
+            return Law.select().where(expr)
+        return Law.select().where(1 == 1)
 
     def delete_law(self, id):
         Law.delete_by_id(id)
@@ -129,6 +136,7 @@ def get_laws():
 
 law_db = LawDatabase()
 
+
 def update_database():
     for folder, f in get_laws():
         category = law_db.get_or_create_category(folder)
@@ -156,11 +164,11 @@ def update_status():
         # ("fgbt", "中华人民共和国澳门特别行政区基本法"),
         ("fgxlwj", "xzfg"),  # 行政法规
         ('type', 'sfjs'),
-        ("zdjg", "4028814858a4d78b0158a50f344e0048&4028814858a4d78b0158a50fa2ba004c"), #北京
-        ("zdjg", "4028814858b9b8e50158bed591680061&4028814858b9b8e50158bed64efb0065"), #河南
-        ("zdjg", "4028814858b9b8e50158bec45e9a002d&4028814858b9b8e50158bec500350031"), # 上海
+        ("zdjg", "4028814858a4d78b0158a50f344e0048&4028814858a4d78b0158a50fa2ba004c"),  # 北京
+        ("zdjg", "4028814858b9b8e50158bed591680061&4028814858b9b8e50158bed64efb0065"),  # 河南
+        ("zdjg", "4028814858b9b8e50158bec45e9a002d&4028814858b9b8e50158bec500350031"),  # 上海
         # ("zdjg", "4028814858b9b8e50158bec5c28a0035&4028814858b9b8e50158bec6abbf0039"), # 江苏
-        ("zdjg", "4028814858b9b8e50158bec7c42f003d&4028814858b9b8e50158beca3c590041"), # 浙江
+        ("zdjg", "4028814858b9b8e50158bec7c42f003d&4028814858b9b8e50158beca3c590041"),  # 浙江
         ("zdjg", "4028814858b9b8e50158bed40f6d0059&4028814858b9b8e50158bed4987a005d"),  # 山东
         # ("zdjg", "4028814858b9b8e50158bef1d72600b9&4028814858b9b8e50158bef2706800bd"), # 陕西省
     ]
@@ -194,11 +202,32 @@ def update_status():
             law.save()
             print("saved", law)
 
+
+def update_ver():
+    db.execute_sql("""update law
+set ver = (select count(1) from law t where t.name = law.name);""")
+
+
+def update_status_same_name():
+    law_map = defaultdict(list)
+    for law in Law.select().where(Law.ver > 1):
+        law_map[law.name].append(law)
+    for name, laws in law_map.items():
+        laws.sort(key=lambda x: x.publish)
+        for i in range(0, len(laws) - 1):
+            law = laws[i]
+            law.expired = True
+            law.save()
+
+
 if __name__ == "__main__":
     tables = [Category, Law]
 
     # db.drop_tables(tables)
     # db.create_tables(tables)
     # recover()
-    update_database()
+    # update_database()
     # update_status()
+
+    # update_ver()
+    update_status_same_name()
