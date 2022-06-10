@@ -62,6 +62,7 @@ INDENT_RE = [
     f"^第{NUMBER_RE}+编",
     f"^第{NUMBER_RE}+章",
     f"^第{NUMBER_RE}+节",
+    "^([一二三四五六七八九十零百千万]+、.{1,15})[^。；：]$",
 ]
 
 LINE_RE = INDENT_RE + [f"^第{NUMBER_RE}+条"]
