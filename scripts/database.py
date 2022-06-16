@@ -226,8 +226,8 @@ if __name__ == "__main__":
     # db.drop_tables(tables)
     # db.create_tables(tables)
     # recover()
-    # update_database()
+    update_database()
     # update_status()
 
-    # update_ver()
+    update_ver()
     update_status_same_name()
