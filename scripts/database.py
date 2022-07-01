@@ -16,7 +16,7 @@ db = peewee.SqliteDatabase('../db.sqlite3')
 
 def get_law_level_by_folder(folder: str) -> str:
     folder = folder.split("/")[0]
-    if re.match("(司法解释)|(地方性法规)|(宪法)|(案例)|(行政法规)", folder):
+    if re.match("^((司法解释)|(地方性法规)|(宪法)|(案例)|(行政法规)|(部门规章))$", folder):
         return folder
     return "法律"
 
@@ -146,7 +146,13 @@ def update_database():
         pub_at = ret.group(1)
         name = f[:ret.span()[0]]
 
-        if law_db.get_laws(name, pub_at):
+        exist_laws = law_db.get_laws(name, pub_at)
+        if exist_laws:
+            expected_level = get_law_level_by_folder(folder)
+            for law in filter(lambda x: x.level != expected_level, exist_laws):
+                law.level = expected_level
+                law.save()
+
             continue
 
         param = {
