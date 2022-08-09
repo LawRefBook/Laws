@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 import enum
 import json
 import logging
@@ -8,15 +7,19 @@ import sys
 import urllib.request
 from abc import ABC, abstractmethod
 from enum import Enum
-from glob import glob
 from hashlib import md5, sha1
 from pathlib import Path
-from time import sleep, time
+from time import sleep
 from typing import Any, List, Tuple
 
 import requests
 from bs4 import BeautifulSoup
 from docx import Document
+from docx.document import Document as _Document
+from docx.oxml.table import CT_Tbl
+from docx.oxml.text.paragraph import CT_P
+from docx.table import Table, _Cell, _Row
+from docx.text.paragraph import Paragraph
 
 import database
 
@@ -140,7 +143,12 @@ class CacheManager(object):
         if not folder_path.exists():
             folder_path.mkdir()
         with open(full_path, "w") as f:
-            f.write("\n\n".join(data))
+            result = "\n\n".join(data)
+            result = result.replace("<!-- TABLE -->\n", "<!-- TABLE -->")
+            result = result.replace("\n<!-- TABLE END -->", "<!-- TABLE END -->")
+            result = result.replace("|\n\n|", "|\n|")
+            result = re.sub("\n{2,}", "\n\n", result)
+            f.write(result)
 
 
 class RequestManager(object):
@@ -253,6 +261,28 @@ class WordParser(Parser):
     def __init__(self) -> None:
         super().__init__("WORD")
 
+    def iter_block_items(self, parent):
+        """
+        Generate a reference to each paragraph and table child within *parent*,
+        in document order. Each returned value is an instance of either Table or
+        Paragraph. *parent* would most commonly be a reference to a main
+        Document object, but also works for a _Cell object, which itself can
+        contain paragraphs and tables.
+        """
+        if isinstance(parent, _Document):
+            parent_elm = parent.element.body
+        elif isinstance(parent, _Cell):
+            parent_elm = parent._tc
+        elif isinstance(parent, _Row):
+            parent_elm = parent._tr
+        else:
+            raise ValueError("something's not right")
+        for child in parent_elm.iterchildren():
+            if isinstance(child, CT_P):
+                yield Paragraph(child, parent)
+            elif isinstance(child, CT_Tbl):
+                yield Table(child, parent)
+
     def parse(self, result, detail) -> Tuple[str, str, List[str]]:
         document = self.request.get_word(detail["path"])
         if not document:
@@ -268,15 +298,42 @@ class WordParser(Parser):
         lines = list(
             filter(
                 lambda x: x,
-                map(
-                    lambda x: x.text.strip(),
-                    document.paragraphs
-                )
+                self.iter_block_items(document)
             )
         )
 
+        def write_row(row):
+            arr = ["| "]
+            for cell in row.cells:
+                text = "\n".join([p.text for p in cell.paragraphs])
+                arr.append(f"{text}  |")
+            content.append("".join(arr))
+            return len(arr) - 1
+
         hasDesc = False
         for n, line in enumerate(lines):
+            if isinstance(line, Table):
+                content.append("<!-- TABLE -->")
+                table = line
+
+                size = write_row(table.rows[0])
+                content.append("".join(["|"] + ["-----|"] * size))
+
+                """
+                | Item         | Price     | # In stock |
+                |--------------|-----------|------------|
+                | Juicy Apples | 1.99      | *7*        |
+                | Bananas      | **1.89**  | 5234       |
+                """
+
+                for row in table.rows[1:]:
+                    write_row(row)
+                content.append("<!-- TABLE END -->")
+                continue
+
+            if isinstance(line, Paragraph):
+                line = line.text.strip()
+
             # 信息行
             if re.match(r"[（\(]\d{4,4}年\d{1,2}月\d{1,2}日", line):
                 isDesc = True
@@ -570,8 +627,8 @@ class LawParser(object):
             for item in arr:
                 if "publish" in item and item["publish"]:
                     item["publish"] = item["publish"].split(" ")[0]
-                if self.is_bypassed_law(item):
-                    continue
+                # if self.is_bypassed_law(item):
+                    # continue
                 # if item["status"] == "9":
                     # continue
                 self.parse_law(item)
@@ -590,8 +647,8 @@ def main():
     req.request.searchType = "1,3"
     req.request.params = [
         # ("type", "公安部规章")
-        ('xlwj', ['02', '03', '04', '05', '06', '07', '08']),  # 法律法规
-        # ("fgbt", "上海市住宅物业管理规定"),
+        # ('xlwj', ['02', '03', '04', '05', '06', '07', '08']),  # 法律法规
+        ("fgbt", "最高人民法院、最高人民检察院关于执行《中华人民共和国刑法》确定罪名"),
         # ("fgxlwj", "xzfg"),  # 行政法规
         # ('type', 'sfjs'),
         # ("zdjg", "4028814858a4d78b0158a50f344e0048&4028814858a4d78b0158a50fa2ba004c"), #北京
@@ -603,7 +660,7 @@ def main():
         # ("zdjg", "4028814858b9b8e50158bef1d72600b9&4028814858b9b8e50158bef2706800bd"), # 陕西省
     ]
     # req.request.req_time = 1647659481879
-    req.request.req_time = int(time() * 1000)
+    # req.request.req_time = int(time() * 1000)
     # req.spec_title = "反有组织犯罪法"
     req.run()
 
