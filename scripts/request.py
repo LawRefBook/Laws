@@ -1,5 +1,6 @@
 import enum
 import json
+from time import time
 import logging
 import os
 import re
@@ -647,8 +648,8 @@ def main():
     req.request.searchType = "1,3"
     req.request.params = [
         # ("type", "公安部规章")
-        # ('xlwj', ['02', '03', '04', '05', '06', '07', '08']),  # 法律法规
-        ("fgbt", "最高人民法院、最高人民检察院关于执行《中华人民共和国刑法》确定罪名"),
+        ('xlwj', ['02', '03', '04', '05', '06', '07', '08']),  # 法律法规
+        #  ("fgbt", "最高人民法院、最高人民检察院关于执行《中华人民共和国刑法》确定罪名"),
         # ("fgxlwj", "xzfg"),  # 行政法规
         # ('type', 'sfjs'),
         # ("zdjg", "4028814858a4d78b0158a50f344e0048&4028814858a4d78b0158a50fa2ba004c"), #北京
@@ -660,7 +661,7 @@ def main():
         # ("zdjg", "4028814858b9b8e50158bef1d72600b9&4028814858b9b8e50158bef2706800bd"), # 陕西省
     ]
     # req.request.req_time = 1647659481879
-    # req.request.req_time = int(time() * 1000)
+    req.request.req_time = int(time() * 1000)
     # req.spec_title = "反有组织犯罪法"
     req.run()
 
