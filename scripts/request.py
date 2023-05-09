@@ -22,6 +22,9 @@ from docx.oxml.text.paragraph import CT_P
 from docx.table import Table, _Cell, _Row
 from docx.text.paragraph import Paragraph
 # pip install python-docx
+# pip install pysqlite3
+# pip install peewee
+
 
 import database
 
@@ -108,7 +111,7 @@ class CacheManager(object):
             key = f"{key}.{filetype}"
         p: Path = self.base_path / type.value
         if not p.exists():
-            p.mkdir()
+            p.mkdir()  # FileNotFoundError: [Errno 2] No such file or directory: '__cache__/req_cache'
         return p / key
 
     def is_exists(self, key: str, type: CacheType, filetype=None):
