@@ -51,6 +51,8 @@ class Law(BaseModel):
     order = peewee.IntegerField(null=True)
     ver = peewee.IntegerField(null=False, default=0)
 
+    tags = peewee.TextField(null=True)
+
     category_id = peewee.ForeignKeyField(Category, backref="laws")
 
     def __repr__(self) -> str:
@@ -79,7 +81,7 @@ class LawDatabase(object):
             publish_at = publish_at.strftime('%Y-%m-%d')
         expr = None
         if name:
-            expr = Law.name == name
+            expr = (Law.name == name) | (Law.subtitle == name)
         if publish_at:
             expr = expr & (Law.publish == publish_at)
         if expr:

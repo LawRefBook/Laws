@@ -1,3 +1,4 @@
 **/__cache__
 **/.DS_Store
 **/__pycache__
+.venv/

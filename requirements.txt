@@ -1,0 +1,12 @@
+beautifulsoup4==4.12.2
+certifi==2023.5.7
+charset-normalizer==3.1.0
+idna==3.4
+jieba==0.42.1
+lxml==4.9.2
+peewee==3.16.2
+Pillow==9.5.0
+python-docx==0.8.11
+requests==2.30.0
+soupsieve==2.4.1
+urllib3==2.0.2
