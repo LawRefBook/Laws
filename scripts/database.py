@@ -114,7 +114,7 @@ class LawDatabase(object):
 
 
 def get_laws():
-    bypass = ["scripts"]
+    bypass = ["scripts", ".venv"]
     base = Path("../")
     ret = []
     for file in base.glob("**/*.md"):
