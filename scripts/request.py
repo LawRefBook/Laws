@@ -548,7 +548,9 @@ class LawParser(object):
             return False
         if re.search(r"的(决定|复函|批复|答复|批复)$", title):
             return True
-        if self.db.get_laws(title, item["publish"]):
+        laws = self.db.get_laws(title, item["publish"])
+        laws = list(laws)
+        if laws:
             return True
         return False
 
@@ -632,8 +634,8 @@ class LawParser(object):
             for item in arr:
                 if "publish" in item and item["publish"]:
                     item["publish"] = item["publish"].split(" ")[0]
-                # if self.is_bypassed_law(item):
-                    # continue
+                if self.is_bypassed_law(item):
+                    continue
                 # if item["status"] == "9":
                     # continue
                 self.parse_law(item)
@@ -652,9 +654,9 @@ def main():
     req.request.searchType = "1,3"
     req.request.params = [
         # ("type", "公安部规章")
-        ('xlwj', ['02', '03', '04', '05', '06', '07', '08']),  # 法律法规
+        # ('xlwj', ['02', '03', '04', '05', '06', '07', '08']),  # 法律法规
         #  ("fgbt", "最高人民法院、最高人民检察院关于执行《中华人民共和国刑法》确定罪名"),
-        # ("fgxlwj", "xzfg"),  # 行政法规
+        ("fgxlwj", "xzfg"),  # 行政法规
         # ('type', 'sfjs'),
         # ("zdjg", "4028814858a4d78b0158a50f344e0048&4028814858a4d78b0158a50fa2ba004c"), #北京
         # ("zdjg", "4028814858b9b8e50158bed591680061&4028814858b9b8e50158bed64efb0065"), #河南
