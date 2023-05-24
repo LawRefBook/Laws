@@ -1,6 +1,4 @@
-import enum
 import json
-from time import time
 import logging
 import os
 import re
@@ -10,9 +8,10 @@ from abc import ABC, abstractmethod
 from enum import Enum
 from hashlib import md5, sha1
 from pathlib import Path
-from time import sleep
+from time import sleep, time
 from typing import Any, List, Tuple
 
+import database
 import requests
 from bs4 import BeautifulSoup
 from docx import Document
@@ -21,17 +20,17 @@ from docx.oxml.table import CT_Tbl
 from docx.oxml.text.paragraph import CT_P
 from docx.table import Table, _Cell, _Row
 from docx.text.paragraph import Paragraph
+
 # pip install python-docx
 # pip install pysqlite3
 # pip install peewee
 
 
-import database
 
 logger = logging.getLogger("Law")
 logger.setLevel(logging.DEBUG)
 
-formatter = logging.Formatter('%(asctime)s:%(levelname)s:%(message)s')
+formatter = logging.Formatter("%(asctime)s:%(levelname)s:%(message)s")
 
 console_handler = logging.StreamHandler()
 console_handler.setFormatter(formatter)
@@ -40,19 +39,19 @@ logger.addHandler(console_handler)
 
 
 REQUEST_HEADER = {
-    'authority': 'flk.npc.gov.cn',
-    'sec-ch-ua': '" Not A;Brand";v="99", "Chromium";v="99", "Microsoft Edge";v="99"',
-    'accept': 'application/json, text/javascript, */*; q=0.01',
-    'x-requested-with': 'XMLHttpRequest',
-    'sec-ch-ua-mobile': '?0',
-    'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.0.4844.51 Safari/537.36 Edg/99.0.1150.39',
-    'sec-ch-ua-platform': '"macOS"',
-    'sec-fetch-site': 'same-origin',
-    'sec-fetch-mode': 'cors',
-    'sec-fetch-dest': 'empty',
-    'referer': 'https://flk.npc.gov.cn/fl.html',
-    'accept-language': 'en-AU,en-GB;q=0.9,en;q=0.8,en-US;q=0.7,zh-CN;q=0.6,zh;q=0.5',
-    'cookie': 'yfx_c_g_u_id_10006696=_ck22022520424713255117764923111; cna=NdafGk8tiAgCAd9IPxhfROag; yfx_f_l_v_t_10006696=f_t_1645792967326__r_t_1646401808964__v_t_1646401808964__r_c_5; Hm_lvt_54434aa6770b6d9fef104d146430b53b=1646407223,1646570042,1646666110,1647148584; acw_tc=75a1461516471485843844814eb808af266b8ede0e0502ec1c46ab1581; Hm_lpvt_54434aa6770b6d9fef104d146430b53b=1647148626',
+    "authority": "flk.npc.gov.cn",
+    "sec-ch-ua": '" Not A;Brand";v="99", "Chromium";v="99", "Microsoft Edge";v="99"',
+    "accept": "application/json, text/javascript, */*; q=0.01",
+    "x-requested-with": "XMLHttpRequest",
+    "sec-ch-ua-mobile": "?0",
+    "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.0.4844.51 Safari/537.36 Edg/99.0.1150.39",
+    "sec-ch-ua-platform": '"macOS"',
+    "sec-fetch-site": "same-origin",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-dest": "empty",
+    "referer": "https://flk.npc.gov.cn/fl.html",
+    "accept-language": "en-AU,en-GB;q=0.9,en;q=0.8,en-US;q=0.7,zh-CN;q=0.6,zh;q=0.5",
+    "cookie": "yfx_c_g_u_id_10006696=_ck22022520424713255117764923111; cna=NdafGk8tiAgCAd9IPxhfROag; yfx_f_l_v_t_10006696=f_t_1645792967326__r_t_1646401808964__v_t_1646401808964__r_c_5; Hm_lvt_54434aa6770b6d9fef104d146430b53b=1646407223,1646570042,1646666110,1647148584; acw_tc=75a1461516471485843844814eb808af266b8ede0e0502ec1c46ab1581; Hm_lpvt_54434aa6770b6d9fef104d146430b53b=1647148626",
 }
 
 
@@ -102,7 +101,6 @@ class CacheType(Enum):
 
 
 class CacheManager(object):
-
     def __init__(self) -> None:
         self.base_path = Path("./__cache__")
 
@@ -157,7 +155,6 @@ class CacheManager(object):
 
 
 class RequestManager(object):
-
     def __init__(self) -> None:
         self.cache = CacheManager()
         self.params = []
@@ -166,16 +163,16 @@ class RequestManager(object):
 
     def getLawList(self, page=1):
         params = self.params + [
-            ('searchType', f'title;accurate;{self.searchType}'),
-            ('sortTr', 'f_bbrq_s;desc'),
-            ('gbrqStart', ''),
-            ('gbrqEnd', ''),
-            ('sxrqStart', ''),
-            ('sxrqEnd', ''),
-            ('sort', 'true'),
-            ('page', str(page)),
-            ('size', '10'),
-            ('_', self.req_time)
+            ("searchType", f"title;accurate;{self.searchType}"),
+            ("sortTr", "f_bbrq_s;desc"),
+            ("gbrqStart", ""),
+            ("gbrqEnd", ""),
+            ("sxrqStart", ""),
+            ("sxrqEnd", ""),
+            ("sort", "true"),
+            ("page", str(page)),
+            ("size", "10"),
+            ("_", self.req_time),
         ]
 
         cache_key = sha1(json.dumps(params).encode()).hexdigest()
@@ -183,11 +180,11 @@ class RequestManager(object):
         if cache := self.cache.get(cache_key, CacheType.WebPage, "json"):
             return cache
 
-        response = requests.get('https://flk.npc.gov.cn/api/',
-                                headers=REQUEST_HEADER, params=params)
+        response = requests.get(
+            "https://flk.npc.gov.cn/api/", headers=REQUEST_HEADER, params=params
+        )
         sleep(1)
-        logger.debug(
-            f"requesting [{response.status_code}] {self.params} page={page} ")
+        logger.debug(f"requesting [{response.status_code}] {self.params} page={page} ")
 
         ret = response.json()
         self.cache.set(cache_key, CacheType.WebPage, ret, "json")
@@ -197,10 +194,11 @@ class RequestManager(object):
         if cache := self.cache.get(law_id, CacheType.WebPage, "json"):
             return cache
         logger.debug(f"getting law detail {law_id}")
-        ret = requests.post('https://flk.npc.gov.cn/api/detail',
-                            headers=REQUEST_HEADER, data={
-                                "id": law_id
-                            })
+        ret = requests.post(
+            "https://flk.npc.gov.cn/api/detail",
+            headers=REQUEST_HEADER,
+            data={"id": law_id},
+        )
         sleep(1)
         ret = ret.json()
         self.cache.set(law_id, CacheType.WebPage, ret, "json")
@@ -211,8 +209,9 @@ class RequestManager(object):
         if cache := self.cache.get(cache_key, CacheType.HTMLDocument, "html"):
             return cache
         logger.debug(f"getting law html file {url}")
-        response = requests.get('https://wb.flk.npc.gov.cn' + url,
-                                headers=REQUEST_HEADER)
+        response = requests.get(
+            "https://wb.flk.npc.gov.cn" + url, headers=REQUEST_HEADER
+        )
         sleep(1)
         response.encoding = "utf8"
         ret = response.text
@@ -223,8 +222,7 @@ class RequestManager(object):
         filename = os.path.basename(url)
         cache_key = filename.split(".")[0]
 
-        ok, path = self.cache.is_exists(
-            cache_key, CacheType.WordDocument, "docx")
+        ok, path = self.cache.is_exists(cache_key, CacheType.WordDocument, "docx")
         if not ok:
             if not re.match(".*docx$", filename):
                 return None
@@ -247,7 +245,6 @@ class RequestManager(object):
 
 
 class Parser(ABC):
-
     def __init__(self, parse_type) -> None:
         super().__init__()
         self.request = RequestManager()
@@ -262,7 +259,6 @@ class Parser(ABC):
 
 
 class WordParser(Parser):
-
     def __init__(self) -> None:
         super().__init__("WORD")
 
@@ -300,12 +296,7 @@ class WordParser(Parser):
         content = []
         isDesc = False
 
-        lines = list(
-            filter(
-                lambda x: x,
-                self.iter_block_items(document)
-            )
-        )
+        lines = list(filter(lambda x: x, self.iter_block_items(document)))
 
         def write_row(row):
             arr = ["| "]
@@ -364,7 +355,6 @@ class WordParser(Parser):
 
 
 class HTMLParser(Parser):
-
     def __init__(self) -> None:
         super().__init__("HTML")
 
@@ -378,8 +368,9 @@ class HTMLParser(Parser):
         parts = bs4.find("div", class_="law-content").find_all("p")
         content = map(lambda x: x.text.replace("\xa0", " ").strip(), parts)
         content = filter(lambda x: x, content)
-        content = filter(lambda x: not title.startswith(x)
-                         and not title.endswith(x), content)
+        content = filter(
+            lambda x: not title.startswith(x) and not title.endswith(x), content
+        )
         content = list(content)
         if not title and re.match("^中华人民共和国", content[0]):
             title = content[0]
@@ -388,7 +379,6 @@ class HTMLParser(Parser):
 
 
 class ContentParser(object):
-
     def __filter_content(self, content: List[str]) -> List[str]:
         menu_start = False
         menu_at = -1
@@ -433,7 +423,7 @@ class ContentParser(object):
                 content_line = re.sub(
                     f"^(第{NUMBER_RE}{{1,6}}[条章节篇](?:之{NUMBER_RE}{{1,2}})*)\s*",
                     lambda x: x.group(0).strip() + " ",
-                    line.strip()
+                    line.strip(),
                 )
                 filtered_content.append(content_line)
 
@@ -444,15 +434,16 @@ class ContentParser(object):
 
     def __filter_desc(self, desc: str) -> List[str]:
         desc_arr = re.findall(
-            r"(\d{4}年\d{1,2}月\d{1,2}日.*?(?:(?:根据)|(?:通过)|(?:公布)|(?:施行)|(?:）)|(?:　)))", desc)
-        desc_arr = map(
-            lambda line: re.sub("^(\d{4,4}年\d{1,2}月\d{1,2}日)",
-                                lambda x: x.group(0) + " ", line),
-            desc_arr)
-        desc_arr = map(
-            lambda x: x.replace("起施行", "施行"),
-            desc_arr
+            r"(\d{4}年\d{1,2}月\d{1,2}日.*?(?:(?:根据)|(?:通过)|(?:公布)|(?:施行)|(?:）)|(?:　)))",
+            desc,
         )
+        desc_arr = map(
+            lambda line: re.sub(
+                "^(\d{4,4}年\d{1,2}月\d{1,2}日)", lambda x: x.group(0) + " ", line
+            ),
+            desc_arr,
+        )
+        desc_arr = map(lambda x: x.replace("起施行", "施行"), desc_arr)
         return list(desc_arr)
 
     def __get_indents(self, content: List[str]) -> List[str]:
@@ -492,7 +483,6 @@ class ContentParser(object):
 
 
 class LawParser(object):
-
     def __init__(self) -> None:
         self.request = RequestManager()
         self.spec_title = None
@@ -503,7 +493,7 @@ class LawParser(object):
         self.content_parser = ContentParser()
         self.cache = CacheManager()
         self.categories = []
-        self.db = database.LawDatabase()
+        # self.db = database.Database()
         self.__init()
 
     def __init(self):
@@ -515,10 +505,12 @@ class LawParser(object):
                 if re.match("^[一二三四五六七八九十]、", line):
                     title = line.split("、")[1]
                     continue
-                categories.append({
-                    "title": line,
-                    "category": title,
-                })
+                categories.append(
+                    {
+                        "title": line,
+                        "category": title,
+                    }
+                )
         self.categories = categories
 
     def __reorder_files(self, files):
@@ -535,10 +527,7 @@ class LawParser(object):
 
         if len(files) > 1:
             # 按照 parser 的位置排序， 优先使用级别
-            files = sorted(
-                files,
-                key=lambda x: self.parser.index(x["type"])
-            )
+            files = sorted(files, key=lambda x: self.parser.index(x["type"]))
 
         return files
 
@@ -548,46 +537,42 @@ class LawParser(object):
             return False
         if re.search(r"的(决定|复函|批复|答复|批复)$", title):
             return True
-        laws = self.db.get_laws(title, item["publish"])
-        laws = list(laws)
-        if laws:
-            return True
+        # laws = self.db.get_laws(title, item["publish"])
+        # laws = list(laws)
+        # if laws:
+        #     return True
         return False
 
     def parse_law(self, item):
         detail = self.request.get_law_detail(item["id"])
         result = detail["result"]
-        title = result['title']
+        title = result["title"]
         files = self.__reorder_files(result["body"])
         logger.debug(f"parsing {title}")
         if len(files) == 0:
             return
 
-        target_file = files[0]
-        parser: Parser = find(
-            lambda x: x == target_file["type"],
-            self.parser
-        )
+        for target_file in files:
+            parser: Parser = find(lambda x: x == target_file["type"], self.parser)
 
-        ret = parser.parse(result, target_file)
-        if not ret:
-            logger.error(f"parsing {title} error")
-            return
-        _, desc, content = ret
+            ret = parser.parse(result, target_file)
+            if not ret:
+                logger.error(f"parsing {title} error")
+                continue
+            _, desc, content = ret
 
-        filedata = self.content_parser.parse(result, title, desc, content)
-        if not filedata:
-            return
+            filedata = self.content_parser.parse(result, title, desc, content)
+            if not filedata:
+                continue
 
-        output_path = self.__get_law_output_path(title, item["publish"])
-        logger.debug(f"parsing {title} success")
-        self.cache.write_law(output_path, filedata)
+            output_path = self.__get_law_output_path(title, item["publish"])
+            logger.debug(f"parsing {title} success")
+            self.cache.write_law(output_path, filedata)
 
     def parse_file(self, file_path, publish_at=None):
         result = {}
         with open(file_path, "r") as f:
-            data = list(filter(lambda x: x, map(
-                lambda x: x.strip(), f.readlines())))
+            data = list(filter(lambda x: x, map(lambda x: x.strip(), f.readlines())))
         title = data[0]
         filedata = self.content_parser.parse(result, title, data[1], data[2:])
         if not filedata:
@@ -626,7 +611,7 @@ class LawParser(object):
             yield from arr
 
     def run(self):
-        for i in range(1, 2):
+        for i in range(1, 20):
             ret = self.request.getLawList(i)
             arr = ret["result"]["data"]
             if len(arr) == 0:
@@ -637,14 +622,13 @@ class LawParser(object):
                 if self.is_bypassed_law(item):
                     continue
                 # if item["status"] == "9":
-                    # continue
+                # continue
                 self.parse_law(item)
                 if self.spec_title is not None:
                     exit(1)
 
 
 def main():
-
     req = LawParser()
 
     args = sys.argv[1:]
@@ -656,7 +640,7 @@ def main():
         # ("type", "公安部规章")
         # ('xlwj', ['02', '03', '04', '05', '06', '07', '08']),  # 法律法规
         #  ("fgbt", "最高人民法院、最高人民检察院关于执行《中华人民共和国刑法》确定罪名"),
-        ("fgxlwj", "xzfg"),  # 行政法规
+        # ("fgxlwj", "xzfg"),  # 行政法规
         # ('type', 'sfjs'),
         # ("zdjg", "4028814858a4d78b0158a50f344e0048&4028814858a4d78b0158a50fa2ba004c"), #北京
         # ("zdjg", "4028814858b9b8e50158bed591680061&4028814858b9b8e50158bed64efb0065"), #河南
@@ -665,6 +649,10 @@ def main():
         # ("zdjg", "4028814858b9b8e50158bec7c42f003d&4028814858b9b8e50158beca3c590041"), # 浙江
         # ("zdjg", "4028814858b9b8e50158bed40f6d0059&4028814858b9b8e50158bed4987a005d"),  # 山东
         # ("zdjg", "4028814858b9b8e50158bef1d72600b9&4028814858b9b8e50158bef2706800bd"), # 陕西省
+        (
+            "zdjg",
+            "4028814858b9b8e50158beda43a50079&4028814858b9b8e50158bedab7ea007d",
+        ),  # 广东
     ]
     # req.request.req_time = 1647659481879
     req.request.req_time = int(time() * 1000)

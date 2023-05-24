@@ -1,52 +1,47 @@
 from collections import defaultdict
-import json
-import re
-from datetime import datetime
-from functools import reduce
 from pathlib import Path
-from typing import List
 from uuid import uuid4
-
+import sys
+import re
+from typing import List
 import peewee
 
-import request
+from datetime import datetime
 
-db = peewee.SqliteDatabase('../db.sqlite3')
-
-
-def get_law_level_by_folder(folder: str) -> str:
-    folder = folder.split("/")[0]
-    if re.match("^((司法解释)|(地方性法规)|(宪法)|(案例)|(行政法规)|(部门规章))$", folder):
-        return folder
-    return "法律"
+database = peewee.SqliteDatabase(None)  # Defer initialization
 
 
 class BaseModel(peewee.Model):
-
     class Meta:
-        database = db  # This model uses the "people.db" database.
+        database = database  # This model uses the "people.db" database.
 
 
 class Category(BaseModel):
-
     id = peewee.IntegerField(primary_key=True)
     name = peewee.TextField()
     folder = peewee.TextField()
     isSubFolder = peewee.BooleanField(default=False)
     group = peewee.TextField(null=True)
-    order = peewee.IntegerField()
+    order = peewee.IntegerField(null=True)
+
+    @staticmethod
+    def get_or_create_category(folder: Path) -> "Category":
+        try:
+            return Category.get(folder=folder)
+        except Category.DoesNotExist:
+            pass
+        return Category.create(**{"name": folder.parts[-1], "folder": folder})
 
 
 class Law(BaseModel):
-
     id = peewee.UUIDField(primary_key=True, default=uuid4)
     level = peewee.TextField()
     name = peewee.TextField(index=True)
     subtitle = peewee.TextField(null=True)
 
     filename = peewee.TextField(null=True)
-    publish = peewee.DateField(formats='%Y-%m-%d', null=True)
-    valid_from = peewee.DateField(formats='%Y-%m-%d', null=True)
+    publish = peewee.DateField(formats="%Y-%m-%d", null=True)
+    valid_from = peewee.DateField(formats="%Y-%m-%d", null=True)
     expired = peewee.BooleanField(default=False)
     order = peewee.IntegerField(null=True)
     ver = peewee.IntegerField(null=False, default=0)
@@ -60,25 +55,14 @@ class Law(BaseModel):
 
     __str__ = __repr__
 
+    @staticmethod
+    def query_all() -> List["Law"]:
+        return Law.select()
 
-class LawDatabase(object):
-
-    def __init__(self) -> None:
-        self.db = db
-
-    def get_or_create_category(self, folder: str) -> Category:
-        try:
-            return Category.get(folder=folder)
-        except Category.DoesNotExist:
-            pass
-        return Category.create(**{
-            "name": folder.split("/")[-1],
-            "folder": folder
-        })
-
-    def get_laws(self, name: str = None, publish_at: datetime | str = None) -> List[Law]:
+    @staticmethod
+    def query(name: str = None, publish_at: str | datetime = None) -> List["Law"]:
         if publish_at and isinstance(publish_at, datetime):
-            publish_at = publish_at.strftime('%Y-%m-%d')
+            publish_at = publish_at.strftime("%Y-%m-%d")
         expr = None
         if name:
             expr = (Law.name == name) | (Law.subtitle == name)
@@ -86,156 +70,151 @@ class LawDatabase(object):
             expr = expr & (Law.publish == publish_at)
         if expr:
             return Law.select().where(expr)
-        return Law.select().where(1 == 1)
-
-    def delete_law(self, id):
-        Law.delete_by_id(id)
-
-    def create_law(self, name: str, category: Category, level: str, publish_at: str = None, id=None) -> Law:
-        try:
-            params = {
-                "name": name,
-            }
-            if publish_at:
-                params["publish"] = publish_at
-            return Law.get(**params)
-        except Law.DoesNotExist:
-            pass
-        params = {
-            "name": name,
-            "category_id": category.id,
-            "level": level,
-        }
-        if publish_at:
-            params["publish"] = publish_at
-        if id:
-            params["id"] = id
-        return Law.create(**params)
+        return []
 
 
-def get_laws():
-    bypass = ["scripts", ".venv"]
-    base = Path("../")
-    ret = []
-    for file in base.glob("**/*.md"):
-        if "_index.md" == file.parts[-1]:
-            continue
-        file = file.relative_to("../")
-        folder = "/".join(file.parts[:-1])
-        if not folder:
-            continue
-        bypass_flag = False
-        for by in bypass:
-            if re.search(by, str(file)):
-                bypass_flag = True
+def get_law_level_by_folder(folder: Path) -> str:
+    root_folder = folder.parts[0]
+    r = re.match("^((司法解释)|(地方性法规)|(宪法)|(案例)|(行政法规)|(部门规章))$", root_folder)
+    if r:
+        return root_folder
+    return "法律"
+
+
+class Database(object):
+    def __init__(self, sqlite_file: Path) -> None:
+        self.tables = [Category, Law]
+        self.sqlite_file = sqlite_file
+        self.db = database
+        self.db.init(sqlite_file)
+        self.prepare()
+
+    def prepare(self):
+        if self.sqlite_file.exists():
+            assert self.sqlite_file.is_file()
+        else:
+            assert self.sqlite_file.name == "db.sqlite3"
+            self.db.create_tables(self.tables)
+
+    def reset(self):
+        yes = False
+        for _ in range(0, 3):
+            yes = input("Are you sure to reset database? [y/N]").lower() == "y"
+            if not yes:
                 break
-        if bypass_flag:
-            continue
-        d = (folder, file.parts[-1].replace(".md", ""))
-        ret.append(d)
-    return ret
+        if yes:
+            self.db.drop_tables(self.tables)
+            self.db.create_tables(self.tables)
 
-
-law_db = LawDatabase()
-
-
-def update_database():
-    for folder, f in get_laws():
-        category = law_db.get_or_create_category(folder)
-        ret = re.search("\((\d{4,4}\-\d{2,2}\-\d{2,2})\)", f)
-        if not ret:
-            continue
-        pub_at = ret.group(1)
-        name = f[:ret.span()[0]]
-
-        exist_laws = law_db.get_laws(name, pub_at)
-        if exist_laws:
-            expected_level = get_law_level_by_folder(folder)
-            for law in filter(lambda x: x.level != expected_level, exist_laws):
-                law.level = expected_level
-                law.save()
-
-            continue
-
-        param = {
-            "name": name,
-            "category": category,
-            "level": get_law_level_by_folder(folder),
-            "publish_at": pub_at,
-        }
-        law = law_db.create_law(**param)
-
-
-def update_status():
-    params = [
-        # ('xlwj', ['02', '03', '04', '05', '06', '07', '08']),  # 法律法规
-        # ("fgbt", "中华人民共和国澳门特别行政区基本法"),
-        ("fgxlwj", "xzfg"),  # 行政法规
-        ('type', 'sfjs'),
-        ("zdjg", "4028814858a4d78b0158a50f344e0048&4028814858a4d78b0158a50fa2ba004c"),  # 北京
-        ("zdjg", "4028814858b9b8e50158bed591680061&4028814858b9b8e50158bed64efb0065"),  # 河南
-        ("zdjg", "4028814858b9b8e50158bec45e9a002d&4028814858b9b8e50158bec500350031"),  # 上海
-        # ("zdjg", "4028814858b9b8e50158bec5c28a0035&4028814858b9b8e50158bec6abbf0039"), # 江苏
-        ("zdjg", "4028814858b9b8e50158bec7c42f003d&4028814858b9b8e50158beca3c590041"),  # 浙江
-        ("zdjg", "4028814858b9b8e50158bed40f6d0059&4028814858b9b8e50158bed4987a005d"),  # 山东
-        # ("zdjg", "4028814858b9b8e50158bef1d72600b9&4028814858b9b8e50158bef2706800bd"), # 陕西省
-    ]
-
-    adding_pub = False
-
-    req = request.LawParser()
-    req.request.searchType = "1,9"
-    for param in params:
-        req.request.params = [param]
-        for item in req.lawList():
-            title = item["title"].replace("中华人民共和国", "")
-            if "publish" in item and item["publish"]:
-                item["publish"] = item["publish"].split(" ")[0]
-            if "expiry" in item and item["expiry"]:
-                item["expiry"] = item["expiry"].split(" ")[0]
-            if adding_pub:
-                laws = law_db.get_laws(title)
-            else:
-                laws = law_db.get_laws(title, item["publish"])
-            if not laws:
-                print(f"{title} 不存在")
-                continue
-            if len(laws) != 1:
-                print(f"{title} 存在两份数据，请手动处理")
-                continue
-            law = laws[0]
-            law.publish = item["publish"].strip()
-            law.valid_from = item["expiry"].strip()
-            law.expired = int(item["status"]) == 9
-            law.save()
-            print("saved", law)
-
-
-def update_ver():
-    db.execute_sql("""update law
-set ver = (select count(1) from law t where t.name = law.name);""")
-
-
-def update_status_same_name():
-    law_map = defaultdict(list)
-    for law in Law.select().where(Law.ver > 1):
-        law_map[law.name].append(law)
-    for name, laws in law_map.items():
-        laws.sort(key=lambda x: x.publish)
-        for i in range(0, len(laws) - 1):
-            law = laws[i]
+    # 更新法律版本
+    # 如果任意法律有多个版本（即同名，但多个 publish, 则将 ver 设为其数量）
+    # 除最新版本的法律, 其余均设为 expired.
+    def update_versions(self):
+        self.db.execute_sql(
+            "update law set ver = (select count(1) from law t where t.name = law.name)"
+        )
+        laws_multi_version = Law.select().where(Law.ver > 1)
+        m = defaultdict(list)
+        for law in laws_multi_version:
+            m[law.name].append(law)
+        expired_laws = []
+        for _, laws in m.items():
+            laws.sort(key=lambda x: x.publish)
+            expired_laws += laws[:-1]
+        for law in expired_laws:
             law.expired = True
             law.save()
 
+    @property
+    def lookup_path(self) -> Path:
+        return self.sqlite_file.parent
+
+    def load_ignore_folders(self):
+        ignore_file = self.lookup_path / ".lawignore"
+        if not ignore_file.exists():
+            return []
+        with open(ignore_file, "r") as f:
+            return [self.lookup_path / line.strip() for line in f.readlines()]
+
+    def __ignore(self, ignore_folders: List[Path], file: Path) -> bool:
+        for ignore_folder in ignore_folders:
+            if ignore_folder in file.parents:
+                return True
+
+    def load_laws(self):
+        ignore_folders = self.load_ignore_folders()
+        for markdown_file in self.lookup_path.glob("**/**/*.md"):
+            if self.__ignore(ignore_folders, markdown_file):
+                # print(f"ignore {markdown_file}")
+                continue
+            r = re.search(r"\((\d{4,4}\-\d{2,2}\-\d{2,2})\)", markdown_file.stem)
+            if not r:
+                continue
+            yield markdown_file, r.group(1), markdown_file.stem[: r.span()[0]]
+
+    def update_law_level(self, laws: List[Law], level: str) -> int:
+        updated_count = 0
+        for law in filter(lambda x: x.level != level, laws):
+            updated_count += 1
+            law.level = level
+            law.save()
+        return updated_count
+
+    def update_database(self):
+        count = {
+            "laws": self.get_law_count(),
+            "handled": 0,
+            "updated": 0,
+            "created": 0,
+        }
+        for law_file, publish_at, law_name in self.load_laws():
+            count["handled"] += 1
+
+            folder = law_file.relative_to(self.lookup_path).parent
+            law_level = get_law_level_by_folder(folder)
+            in_db_laws = Law.query(name=law_name, publish_at=publish_at)
+            if in_db_laws:
+                updated = self.update_law_level(in_db_laws, law_level)
+                count["updated"] += updated
+                continue
+            # Law 不存在于数据库中
+            category = Category.get_or_create_category(folder)
+            Law.create(
+                name=law_name,
+                publish=publish_at,
+                category_id=category.id,
+                level=law_level,
+            )
+            count["created"] += 1
+        return count
+
+    def get_law_count(self):
+        return Law.select().count()
+
+
+def main():
+    args = sys.argv[1:]
+    if len(args) != 2:
+        print("Usage: python3 database.py <command(update/drop)> <sqlite_file>")
+        return
+    command = args[0]
+    sqlite_file = Path(args[1])
+    db = Database(sqlite_file)
+
+    if command == "drop":
+        db.reset()
+        return
+
+    if command == "update":
+        count = db.update_database()
+        print(f"Total: {count['laws']}")
+        print(f"Handled: {count['handled']}")
+        print(f"Updated: {count['updated']}")
+        print(f"Created: {count['created']}")
+        return
+
+    print("Unknown command")
+
 
 if __name__ == "__main__":
-    tables = [Category, Law]
-
-    # db.drop_tables(tables)
-    # db.create_tables(tables)
-    # recover()
-    update_database()
-    # update_status()
-
-    update_ver()
-    update_status_same_name()
+    main()
