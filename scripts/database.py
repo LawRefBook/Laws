@@ -7,6 +7,7 @@ from typing import List
 import peewee
 
 from datetime import datetime
+from sqlite3 import Cursor
 
 database = peewee.SqliteDatabase(None)  # Defer initialization
 
@@ -17,7 +18,7 @@ class BaseModel(peewee.Model):
 
 
 class Category(BaseModel):
-    id = peewee.IntegerField(primary_key=True)
+    id = peewee.UUIDField(primary_key=True, default=uuid4)
     name = peewee.TextField()
     folder = peewee.TextField()
     isSubFolder = peewee.BooleanField(default=False)
@@ -48,7 +49,7 @@ class Law(BaseModel):
 
     tags = peewee.TextField(null=True)
 
-    category_id = peewee.ForeignKeyField(Category, backref="laws")
+    category_id = peewee.UUIDField(null=False)
 
     def __repr__(self) -> str:
         return f"<Law {self.name}>"
@@ -190,7 +191,6 @@ class Database(object):
 
     def get_law_count(self):
         return Law.select().count()
-
 
 def main():
     args = sys.argv[1:]

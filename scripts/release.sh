@@ -1,5 +1,10 @@
 #!/bin/bash
 
+force=false
+if [ "$1" == "-f" ]; then
+    force=true
+fi
+
 function pack {
 
     out_path="$(pwd)/release"
@@ -15,7 +20,7 @@ function pack {
     _hash=$(git log -n 1 --pretty=format:"%H"  -- . ':!scripts' ':!.*' ':!DLC' | awk -F" " '{printf "%s", $1}')
     _hash_file="$output_zip.hash"
 
-    if [ -f $_hash_file ]; then
+    if [ -f $_hash_file ] && [ ! $force ] ; then
         if [ "$_hash" == "$(cat $_hash_file)" ]; then
             echo "No changes detected, skipping..."
             return
@@ -27,6 +32,7 @@ function pack {
     echo $_hash > $_hash_file
 }
 
+echo "Force: $force"
 cd ../
 current_path=$(pwd)
 pack "." "laws.zip"
