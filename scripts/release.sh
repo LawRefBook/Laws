@@ -36,11 +36,15 @@ for dir in "$folder"*/*; do
     if [ -d "$dir" ]; then
         pack $dir "$filename.zip"
     fi
+    cd $current_path
 done
 
 # Generate dlc.txt
 cd $current_path
 rm ./release/dlc.txt
 for file in $(find ./release/DLC -name "*.zip"); do
-    echo "$(basename $file) $(cat $file.hash)" >> ./release/dlc.txt
+    name=$(basename $file)
+    name=${name%.*}
+    echo "$name $(cat $file.hash)" >> ./release/dlc.txt
 done
+
