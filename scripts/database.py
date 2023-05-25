@@ -161,6 +161,37 @@ class Database(object):
             law.save()
         return updated_count
 
+    def validate(self):
+        for law_file, publish_at, law_name in self.load_laws():
+            content = law_file.read_text(encoding="utf-8")
+            lines = content.splitlines()
+            titles = list(filter(lambda x: x.startswith("## "), lines))
+            if not titles:
+                continue
+
+            if len(titles) == len(set(titles)):
+                continue
+
+            print(f"Duplicate titles in {law_file}")
+
+            # find line idx == <!-- INFO END -->
+            info_end_idx = None
+            for idx, line in enumerate(lines):
+                if line.strip().startswith("<!-- INFO END -->"):
+                    info_end_idx = idx
+                    break
+            info_end_idx = info_end_idx + 1
+            first_title = list(
+                filter(
+                    lambda x: x[1].replace(" ", "") == titles[0].replace(" ", ""),
+                    enumerate(lines),
+                )
+            )
+            start_idx = first_title[-1][0]
+            # remove lines betwween info_end_idx and start_idx
+            lines = lines[:info_end_idx] + lines[start_idx:]
+            law_file.write_text("\n".join(lines), encoding="utf-8")
+
     def update_database(self):
         count = {
             "laws": self.get_law_count(),
@@ -192,6 +223,7 @@ class Database(object):
     def get_law_count(self):
         return Law.select().count()
 
+
 def main():
     args = sys.argv[1:]
     if len(args) != 2:
@@ -211,6 +243,10 @@ def main():
         print(f"Handled: {count['handled']}")
         print(f"Updated: {count['updated']}")
         print(f"Created: {count['created']}")
+        return
+
+    if command == "validate":
+        db.validate()
         return
 
     print("Unknown command")
