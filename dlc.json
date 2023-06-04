@@ -1,12 +1,44 @@
 [
   {
+    "name": "山东地方法规",
+    "hash": "79f1a0f926430fd1161dfc154634e782c85bd579",
+    "update": 1685876931,
+    "filesize": 2824
+  },
+  {
+    "name": "河南地方法规",
+    "hash": "79f1a0f926430fd1161dfc154634e782c85bd579",
+    "update": 1685876931,
+    "filesize": 2300
+  },
+  {
+    "name": "浙江地方法规",
+    "hash": "79f1a0f926430fd1161dfc154634e782c85bd579",
+    "update": 1685876931,
+    "filesize": 2360
+  },
+  {
     "name": "广东地方法规",
     "hash": "c6a1a70bbe593a1940d940c1493dce8385641863",
-    "update": 1685014038
+    "update": 1685014038,
+    "filesize": 624
+  },
+  {
+    "name": "上海地方法规",
+    "hash": "79f1a0f926430fd1161dfc154634e782c85bd579",
+    "update": 1685876931,
+    "filesize": 1248
+  },
+  {
+    "name": "北京地方法规",
+    "hash": "79f1a0f926430fd1161dfc154634e782c85bd579",
+    "update": 1685876931,
+    "filesize": 920
   },
   {
     "name": "重庆地方法规",
-    "hash": "c6a1a70bbe593a1940d940c1493dce8385641863",
-    "update": 1685014038
+    "hash": "79f1a0f926430fd1161dfc154634e782c85bd579",
+    "update": 1685876931,
+    "filesize": 608
   }
 ]
