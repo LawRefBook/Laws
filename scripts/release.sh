@@ -71,11 +71,11 @@ function genJSON() {
     for file in $(find ./release/DLC -name "*.zip"); do
         name=$(basename $file)
         name=${name%.*}
-        hash=$(cat $METADATA_PATH/$name.hash)
-        at=$(cat $METADATA_PATH/$name.at)
-        size=$(du -k "$file" | cut -f1)
-        json=$(printf '{"name":"%s","hash":"%s", "update":%s, "filesize":%s},\n' $name $hash $at $size | sed '$ s/.$//')
-        echo $json"," >> $OUT_JSON_FILE
+        meta=$(cat $METADATA_PATH/$name.meta)
+        echo $meta"," >> $OUT_JSON_FILE
+        # size=$(du -k "$file" | cut -f1)
+        # json=$(printf '{"name":"%s","hash":"%s", "update":%s, "filesize":%s},\n' $name $hash $at $size | sed '$ s/.$//')
+        # echo $json"," >> $OUT_JSON_FILE
     done
 
     sed '$s/,$//' "$OUT_JSON_FILE" > $OUT_JSON_FILE".tmp"
