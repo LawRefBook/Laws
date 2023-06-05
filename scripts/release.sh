@@ -23,7 +23,6 @@ function pack {
 
     if [ "$1" != "." ]; then out_path="$out_path/DLC"; fi
     if [ ! -d "$out_path" ]; then mkdir -p "$out_path"; fi
-    output_zip="$out_path/$output_zip_name"
 
     cd "$1" || exit
 
@@ -36,6 +35,9 @@ function pack {
         fi
     fi
 
+    find "$out_path" -name "$output_name*" -delete
+    output_zip="$out_path/$output_zip_name"
+    if [ "$1" != "." ]; then output_zip="$out_path/$output_name.$_hash.zip"; fi
     echo "Packaging $1 to $output_zip"
 
     find . -type f \( -name ".*" -prune \) -o \( -name "scripts" -o -name "release" -o -name ".venv" -o -name ".git*" -o -name "DLC" \) -prune -o -exec zip -q "$output_zip" {} +
@@ -71,11 +73,9 @@ function genJSON() {
     for file in $(find ./release/DLC -name "*.zip"); do
         name=$(basename $file)
         name=${name%.*}
+        name=${name%.*}
         meta=$(cat $METADATA_PATH/$name.meta)
         echo $meta"," >> $OUT_JSON_FILE
-        # size=$(du -k "$file" | cut -f1)
-        # json=$(printf '{"name":"%s","hash":"%s", "update":%s, "filesize":%s},\n' $name $hash $at $size | sed '$ s/.$//')
-        # echo $json"," >> $OUT_JSON_FILE
     done
 
     sed '$s/,$//' "$OUT_JSON_FILE" > $OUT_JSON_FILE".tmp"
