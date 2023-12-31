@@ -24,6 +24,8 @@ function pack {
     if [ "$1" != "." ]; then out_path="$out_path/DLC"; fi
     if [ ! -d "$out_path" ]; then mkdir -p "$out_path"; fi
 
+    if [ ! -d "$(dirname "$meta_file")" ]; then mkdir -p "$(dirname "$meta_file")"; fi
+
     cd "$1" || exit
 
     _hash=$(git log -n 1 --pretty=format:"%H"  -- . ':!scripts' ':!.*' ':!DLC' | awk -F" " '{printf "%s", $1}')

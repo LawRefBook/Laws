@@ -23,7 +23,7 @@ class CacheManager(object):
             key = f"{key}.{filetype}"
         p: Path = self.base_path / type.value
         if not p.exists():
-            p.mkdir()  # FileNotFoundError: [Errno 2] No such file or directory: '__cache__/req_cache'
+            p.mkdir(parents=True)
         return p / key
 
     def is_exists(self, key: str, type: CacheType, filetype=None):
@@ -55,7 +55,7 @@ class CacheManager(object):
     def OUTPUT_PATH(self):
         p = self.base_path / "out"
         if not p.exists():
-            p.mkdir()
+            p.mkdir(parents=True)
         return p
 
     def write_law(self, path: Path, data: List[str]):

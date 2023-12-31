@@ -1,6 +1,6 @@
 import logging
-import re
 import os
+import re
 import sys
 from hashlib import md5
 from pathlib import Path
@@ -8,8 +8,8 @@ from time import time
 from typing import Any, List
 
 from common import LINE_RE
-from parsers import HTMLParser, WordParser, ContentParser, Parser
-from manager import RequestManager, CacheManager
+from manager import CacheManager, RequestManager
+from parsers import ContentParser, HTMLParser, Parser, WordParser
 
 logger = logging.getLogger("Law")
 logger.setLevel(logging.DEBUG)
@@ -47,25 +47,6 @@ class LawParser(object):
         self.content_parser = ContentParser()
         self.cache = CacheManager()
         self.categories = []
-        # self.db = database.Database()
-        self.__init()
-
-    def __init(self):
-        categories = []
-        with open("./cate.txt", "r") as f:
-            title = ""
-            for line in f.readlines():
-                line = line.strip()
-                if re.match("^[一二三四五六七八九十]、", line):
-                    title = line.split("、")[1]
-                    continue
-                categories.append(
-                    {
-                        "title": line,
-                        "category": title,
-                    }
-                )
-        self.categories = categories
 
     def __reorder_files(self, files):
         # 必须有 parser
@@ -91,10 +72,6 @@ class LawParser(object):
             return False
         if re.search(r"的(决定|复函|批复|答复|批复)$", title):
             return True
-        # laws = self.db.get_laws(title, item["publish"])
-        # laws = list(laws)
-        # if laws:
-        #     return True
         return False
 
     def parse_law(self, item):
@@ -165,7 +142,7 @@ class LawParser(object):
             yield from arr
 
     def run(self):
-        for i in range(1, 20):
+        for i in range(1, 5):
             ret = self.request.getLawList(i)
             arr = ret["result"]["data"]
             if len(arr) == 0:
@@ -202,7 +179,7 @@ def main():
     req.request.searchType = "1,3"
     req.request.params = [
         # ("type", "公安部规章")
-        ('xlwj', ['02', '03', '04', '05', '06', '07', '08']),  # 法律法规
+        ("xlwj", ["02", "03", "04", "05", "06", "07", "08"]),  # 法律法规
         #  ("fgbt", "最高人民法院、最高人民检察院关于执行《中华人民共和国刑法》确定罪名"),
         # ("fgxlwj", "xzfg"),  # 行政法规
         # ('type', 'sfjs'),
@@ -225,8 +202,12 @@ def main():
     # req.request.req_time = 1647659481879
     req.request.req_time = int(time() * 1000)
     # req.spec_title = "反有组织犯罪法"
-    req.run()
-    req.remove_duplicates()
+    try:
+        req.run()
+    except KeyboardInterrupt:
+        logger.info("keyboard interrupt")
+    finally:
+        req.remove_duplicates()
 
 
 if __name__ == "__main__":
