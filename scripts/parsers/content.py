@@ -2,7 +2,7 @@ import logging
 import re
 from typing import List
 
-from common import INDENT_RE, NUMBER_RE, LINE_START
+from common import INDENT_RE, LINE_START, NUMBER_RE
 
 logger = logging.getLogger(__name__)
 
@@ -84,12 +84,16 @@ class ContentParser(object):
                     break
         return ret
 
-    def parse(self, result, title, desc, content: List[str]) -> List[str]:
+    def parse(self, result, title: str, desc, content: List[str]) -> List[str]:
         desc = self.__filter_desc(desc)
         content = self.__filter_content(content)
         if len(content) == 0:
             logger.warning(f"{title} has no content")
             return
+
+        # if title exists in first then line of content, remove it
+        if title.strip() in content[:10]:
+            content.remove(title.strip())
 
         indents = self.__get_indents(content)
 
