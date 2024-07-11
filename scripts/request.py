@@ -176,10 +176,12 @@ def main():
     if args:
         req.parse_file(args[0], args[1])
         return
-    req.request.searchType = "1,3"
+    # req.request.searchType = "1,3"
+    # req.request.searchType = 'title;vague'
     req.request.params = [
         # ("type", "公安部规章")
-        ("xlwj", ["02", "03", "04", "05", "06", "07", "08"]),  # 法律法规
+        # ("xlwj", ["02", "03", "04", "05", "06", "07", "08"]),  # 法律法规
+        ("xlwj", ["07"]),
         #  ("fgbt", "最高人民法院、最高人民检察院关于执行《中华人民共和国刑法》确定罪名"),
         # ("fgxlwj", "xzfg"),  # 行政法规
         # ('type', 'sfjs'),
