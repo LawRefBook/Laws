@@ -49,7 +49,10 @@ class WordParser(Parser):
                 yield Table(child, parent)
 
     def parse(self, result, detail) -> Tuple[str, str, List[str]]:
-        document = self.request.get_word(detail["path"])
+        leval = result["level"].strip()
+        title = result["title"].strip()
+
+        document = self.request.get_word(detail["path"], leval + "/" + title)
         if not document:
             logger.warning(f"document {detail['path']} not exists")
             return

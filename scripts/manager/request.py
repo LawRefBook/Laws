@@ -93,11 +93,14 @@ class RequestManager(object):
         self.cache.set(cache_key, CacheType.HTMLDocument, ret, "html")
         return ret
 
-    def get_word(self, url) -> Document:
+    def get_word(self, url, title) -> Document:
         filename = os.path.basename(url)
-        cache_key = filename.split(".")[0]
+        # 扩展名
+        filenameExt = filename.split(".")[-1]
+        first_path = title.split('/')
+        self.cache.word_output_path(first_path[1], CacheType.WordDocument, first_path[0])
 
-        ok, path = self.cache.is_exists(cache_key, CacheType.WordDocument, "docx")
+        ok, path = self.cache.is_exists(title, CacheType.WordDocument, filenameExt)
         if not ok:
             if not re.match(".*docx$", filename):
                 return None

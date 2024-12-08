@@ -70,3 +70,10 @@ class CacheManager(object):
             result = result.replace("|\n\n|", "|\n|")
             result = re.sub("\n{2,}", "\n\n", result)
             f.write(result)
+
+
+    def word_output_path(self, key: str, type: CacheType, path: str):
+        p = self.base_path / type.value / path
+        if not p.exists():
+            p.mkdir(parents=True)
+        return p / key
