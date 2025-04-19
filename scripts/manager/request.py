@@ -1,14 +1,15 @@
 import json
+import logging
 import os
 import re
 import urllib.request
 from hashlib import sha1
+from pathlib import Path
 from time import sleep
-import logging
+
 import requests
 from docx import Document
 from manager.cache import CacheManager, CacheType
-
 
 logger = logging.getLogger(__name__)
 
@@ -93,11 +94,14 @@ class RequestManager(object):
         self.cache.set(cache_key, CacheType.HTMLDocument, ret, "html")
         return ret
 
-    def get_word(self, url) -> Document:
+    def get_word(self, url: str, title_or_output_path: Path) -> Document:
         filename = os.path.basename(url)
-        cache_key = filename.split(".")[0]
+        _, file_extension = os.path.splitext(filename)
 
-        ok, path = self.cache.is_exists(cache_key, CacheType.WordDocument, "docx")
+        title = title_or_output_path.name
+        parent_path = title_or_output_path.parent
+
+        ok, path = self.cache.is_exists(title, CacheType.WordDocument, file_extension)
         if not ok:
             if not re.match(".*docx$", filename):
                 return None
