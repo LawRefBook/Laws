@@ -60,9 +60,9 @@ class CacheManager(object):
 
     def write_law(self, path: Path, data: List[str]):
         full_path = self.OUTPUT_PATH / path
-        folder_path = full_path.parents[0]
+        folder_path = full_path.parent
         if not folder_path.exists():
-            folder_path.mkdir()
+            folder_path.mkdir(parents=True)
         with open(full_path, "w") as f:
             result = "\n\n".join(data)
             result = result.replace("<!-- TABLE -->\n", "<!-- TABLE -->")
@@ -72,7 +72,7 @@ class CacheManager(object):
             f.write(result)
 
 
-    def word_output_path(self, key: str, type: CacheType, path: str):
+    def word_output_path(self, key: str, type: CacheType, path: Path | str):
         p = self.base_path / type.value / path
         if not p.exists():
             p.mkdir(parents=True)

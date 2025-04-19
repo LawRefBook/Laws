@@ -79,7 +79,7 @@ class LawParser(object):
         result = detail["result"]
         title = result["title"]
         # 类别
-        level_path = result["level"]
+        level = result["level"]
         files = self.__reorder_files(result["body"])
         logger.debug(f"parsing {title}")
         if len(files) == 0:
@@ -98,7 +98,7 @@ class LawParser(object):
             if not filedata:
                 continue
 
-            output_path = level_path / self.__get_law_output_path(title, item["publish"])
+            output_path = level / self.__get_law_output_path(title, item["publish"])
             logger.debug(f"parsing {title} success")
             self.cache.write_law(output_path, filedata)
 

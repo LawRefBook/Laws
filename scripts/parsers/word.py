@@ -1,16 +1,17 @@
 import logging
 import re
+from pathlib import Path
 from typing import List, Tuple
 
-from docx.document import Document as _Document
+from common import LINE_RE
 from docx import Document
+from docx.document import Document as _Document
+from docx.oxml import CT_SectPr
 from docx.oxml.table import CT_Tbl
 from docx.oxml.text.paragraph import CT_P
-from docx.oxml import CT_SectPr
 from docx.table import Table, _Cell, _Row
 from docx.text.paragraph import Paragraph
 from parsers.base import Parser
-from common import LINE_RE
 
 logger = logging.getLogger(__name__)
 
@@ -49,15 +50,14 @@ class WordParser(Parser):
                 yield Table(child, parent)
 
     def parse(self, result, detail) -> Tuple[str, str, List[str]]:
-        leval = result["level"].strip()
+        level = result["level"].strip()
         title = result["title"].strip()
 
-        document = self.request.get_word(detail["path"], leval + "/" + title)
+        document = self.request.get_word(detail["path"], Path(level) / title)
         if not document:
             logger.warning(f"document {detail['path']} not exists")
             return
 
-        title = result["title"].strip()
         return self.parse_document(document, title)
 
     def parse_document(self, document, title):
