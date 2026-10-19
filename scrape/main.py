@@ -85,7 +85,7 @@ def process_item(provider: Provider, item: LawListItem, path_modifier: Callable[
         filename = f"{filename}({item.publication_date})"
     filename = f"{filename}.md"
 
-    ret = Path(".") / item.type / filename
+    ret = Path(".") / item.type / filename.strip()
     if path_modifier:
         ret = path_modifier(ret)
 
@@ -158,9 +158,11 @@ def download_all(limit: int):
     """Iterate through all laws and download them."""
     kwargs = {
         "flfgCodeId": [
+            101, 102, 110, 120, 130, 140, 150, 155, 160, 170, 180, 190, 195, 200,  # 法律
             210,  # 行政法规
             311, 320, 330, 340, 350  # 司法解释
-        ]
+        ],
+        "orderByParam": {"order": "gbrq", "sort": "DESC"},
     }
     _download_all(NationalLawDatabaseProvider(), limit, **kwargs)
 
