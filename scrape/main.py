@@ -144,6 +144,8 @@ def _download_all(p: Provider, limit: int, **kwargs):
 
     bar = tqdm.tqdm(total=0, unit="laws", unit_scale=True)
     for count, item in enumerate(loop_laws()):
+        if limit > 0 and count >= limit:
+            break
         bar.set_description(f"Processing: {item.short_title}")
         try:
             process_item(p, item, path_modifier=path_modifier)
