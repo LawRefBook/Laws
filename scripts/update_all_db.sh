@@ -9,7 +9,6 @@ update_db() {
     local message="$2"
     
     echo "$message"
-    python database.py migrate "$db_path"
     python database.py update "$db_path"
 }
 

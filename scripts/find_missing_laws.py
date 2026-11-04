@@ -1,8 +1,20 @@
 
 from pathlib import Path
 import sys
-from typing import List
+from typing import Dict, List, Set
 import re
+
+from common import short_title
+
+
+def title_key(title: str) -> str:
+    """比较用：去掉空白，〈〉换成《》，去掉开头和书名号里的「中华人民共和国」。
+
+    正文引用「《最高人民法院关于适用〈中华人民共和国婚姻法〉若干问题的解释（三）》」
+    和文件名「最高人民法院关于适用《婚姻法》若干问题的解释（三）」是同一部。
+    """
+    title = re.sub(r"\s", "", title).replace("〈", "《").replace("〉", "》")
+    return short_title(title)
 
 def is_file_ignored(file: Path, ignore_folders: List[Path | re.Pattern]) -> bool:
     for folder in ignore_folders:
@@ -39,14 +51,14 @@ def main():
         return
 
     pattern = re.compile(r"《(.*?)》")
-    all_mentioned_laws: Set[str] = set()
+    # 归一化后的名称 → 正文里第一次出现的写法
+    all_mentioned_laws: Dict[str, str] = {}
     all_laws: Set[str] = set()
     for file in look_files(path):
         filename = file.stem
         # 人力资源社会保障部办公厅关于订立电子劳动合同有关问题的函(2020-03-04).md
         filename = re.sub(r"\(\d{4,4}\-\d{2,2}\-\d{2,2}\)", "", filename)
-        all_laws.add(filename)
-        all_laws.add("中华人民共和国" + filename)
+        all_laws.add(title_key(filename))
 
         content = file.read_text(encoding="utf-8")
         matches = pattern.findall(content)
@@ -60,15 +72,21 @@ def main():
                 continue
             if len(match) <= 3:
                 continue
-            all_mentioned_laws.add(match)
+            all_mentioned_laws.setdefault(title_key(match), match)
 
     ignore_laws = set([
         "残疾军人证",
     ])
 
-    missing_laws = all_mentioned_laws - all_laws
-    for law in missing_laws:
-        print(law)
+    def collected(key: str) -> bool:
+        if key in all_laws:
+            return True
+        # 引用时常省略发布机关：「关于〈刑法〉第三十条的解释」→「全国人民代表大会常务委员会关于《刑法》第三十条的解释」
+        return key.startswith("关于") and any(law.endswith(key) for law in all_laws)
+
+    for key, law in sorted(all_mentioned_laws.items()):
+        if not collected(key):
+            print(law)
 
 
 if __name__ == "__main__":

@@ -3,9 +3,23 @@
 RELEASE_FOLDER="./.release"
 RELEASE_BRANCH="release"
 
+# -f      不比较 hash，强制重新打包
+# --main  只发布本体，DLC 保持线上版本不动
+# --dlc   只发布 DLC，本体保持线上版本不动
 force=0
-if [ "$1" == "-f" ]; then
-    force=1
+pack_main=1
+pack_dlc=1
+for arg in "$@"; do
+    case "$arg" in
+        -f) force=1 ;;
+        --main) pack_dlc=0 ;;
+        --dlc) pack_main=0 ;;
+        *) echo "Usage: $0 [-f] [--main | --dlc]"; exit 1 ;;
+    esac
+done
+if [ "$pack_main" == 0 ] && [ "$pack_dlc" == 0 ]; then
+    echo "--main 和 --dlc 不能同时使用"
+    exit 1
 fi
 
 if ! command -v jq >/dev/null; then
@@ -31,7 +45,8 @@ function pack {
 
     cd "$1" || exit
 
-    _hash=$(git log -n 1 --pretty=format:"%H"  -- . ':!scripts' ':!scrape' ':!.*' ':!DLC' | awk -F" " '{printf "%s", $1}')
+    # scrape 已并入 scripts，仍排除它，否则移走 scrape 的那次提交会被算成数据变化
+    _hash=$(git log -n 1 --pretty=format:"%H"  -- . ':!scripts' ':!scrape' ':!.*' ':!DLC' ':!Makefile' | awk -F" " '{printf "%s", $1}')
 
     if [ "$force" == 0 ] ; then
         # Check if the metadata file exists in the release branch
@@ -49,9 +64,9 @@ function pack {
     if [ "$1" != "." ]; then output_zip="$out_path/$output_name.$_hash.zip"; fi
     echo "Packaging $1 to $output_zip"
 
-    find . -type f \( -name ".*" -prune \) -o \( -name "scripts" -o -name "scrape" -o -name "release" -o -name ".venv" -o -name ".git*" -o -name "DLC" \) -prune -o -exec zip -q "$output_zip" {} +
+    find . -type f \( -name ".*" -prune \) -o \( -name "scripts" -o -name "Makefile" -o -name "scrape" -o -name "release" -o -name ".venv" -o -name ".git*" -o -name "DLC" \) -prune -o -exec zip -q "$output_zip" {} +
 
-    _at=$(git log -n 1 --pretty=format:"%at"  -- . ':!scripts' ':!scrape' ':!.*' ':!DLC' | awk -F" " '{printf "%s", $1}')
+    _at=$(git log -n 1 --pretty=format:"%at"  -- . ':!scripts' ':!scrape' ':!.*' ':!DLC' ':!Makefile' | awk -F" " '{printf "%s", $1}')
     size=$(du -k "$output_zip" | cut -f1)
 
     json=$(printf '{"name":"%s","hash":"%s", "update":%s, "filesize":%s}' $output_name $_hash $_at $size)
@@ -59,7 +74,8 @@ function pack {
 }
 
 function packall() {
-    pack "." "laws.zip"
+    if [ "$pack_main" == 1 ]; then pack "." "laws.zip"; fi
+    if [ "$pack_dlc" == 0 ]; then return; fi
     folder="./DLC"
     for dir in "$folder"*/*; do
         filename=$(basename "$dir")
