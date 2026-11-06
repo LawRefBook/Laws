@@ -10,12 +10,12 @@ draft: true
 
 ## 贡献指南
 
-下面的操作都可以在仓库根目录运行 `make`（即 `make shell`），按菜单选择，不用记命令。另有 `make lint`、`make test`；第一次使用或 `requirements.txt` 变化后运行 `make setup`。
+下面的操作都可以在仓库根目录运行 `make`（即 `make shell`），按菜单选择，不用记命令。另有 `make lint`、`make lint-fix`、`make test`；第一次使用或 `requirements.txt` 变化后运行 `make setup`。
 
 ### 手动贡献
 
  - 根据[法律法规模版](法律法规模版.md) 的格式，将法律法规放入 `法律法规` 文件夹下合适的位置
- - 在仓库根目录运行 `.venv/bin/python scripts/lint.py`，检查格式（有 error 时退出码为 1）
+ - 在仓库根目录运行 `.venv/bin/python scripts/lint.py`，检查格式（有 error 时退出码为 1）；`--diff` 列出能自动修复的改动，`--fix` 自动修复后再检查
  - 在 `scripts` 目录下运行 `./update_all_db.sh`（会自动更新 `sqlite` 内容）
  - 提交更改，并提 pr
 

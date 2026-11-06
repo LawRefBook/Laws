@@ -1,5 +1,6 @@
 import re
 from pathlib import Path
+from typing import List
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 ROOT = SCRIPTS_DIR.parent
@@ -27,9 +28,20 @@ _INVISIBLE = re.compile("[​‌‍⁠﻿\xad]")
 _SPACE = re.compile(r"[\s　\xa0]+")
 
 
+_PUA = "\ue000-\uf8ff"
+# 私用区字符：数字之间的 \ue010 是小数点（「GB9959\ue0102-2001」「1\ue0104米」）；
+# 在段首段尾、空白或标点旁边的是排版残留；夹在两个字中间的可能是生僻字，保留
+_PUA_DOT = re.compile(r"(?<=\d)\ue010(?=\d)")
+_PUA_STRAY = re.compile(rf"(?:^|(?<=[\s　，。；：、！？）)》”]))[{_PUA}]+|[{_PUA}]+(?=$|[\s　，。；：、！？（(《“])", re.M)
+
+
+def fix_private_use(text: str) -> str:
+    return _PUA_STRAY.sub("", _PUA_DOT.sub(".", text))
+
+
 def clean(text: str) -> str:
-    """去掉不可见字符，连续空白合并为一个半角空格。"""
-    return _SPACE.sub(" ", _INVISIBLE.sub("", text)).strip()
+    """去掉不可见字符和排版残留的私用区字符，连续空白合并为一个半角空格。"""
+    return _SPACE.sub(" ", _INVISIBLE.sub("", fix_private_use(text))).strip()
 
 
 def norm(text: str) -> str:
@@ -88,6 +100,31 @@ REGION_CODE_MAP = {
     "宁夏": 460,
     "新疆": 470,
 }
+
+
+def parse_regions(spec: str) -> List[str]:
+    """「7-31」「北京 3,5-8」→ 地区名。编号从 1 开始，顺序同 REGION_CODE_MAP，和 make shell 里列出的一样。"""
+    names = list(REGION_CODE_MAP)
+    spec = re.sub(r"\s*[-~～—]\s*", "-", spec.strip())
+    result: List[str] = []
+    for part in re.split(r"[,，、\s]+", spec):
+        if not part:
+            continue
+        if part in REGION_CODE_MAP:
+            picked = [part]
+        elif m := re.fullmatch(r"(\d+)-(\d+)", part):
+            start, end = int(m.group(1)), int(m.group(2))
+            if not 1 <= start <= end <= len(names):
+                raise ValueError(f"范围要在 1-{len(names)} 之间，且从小到大：{part}")
+            picked = names[start - 1:end]
+        elif part.isdigit() and 1 <= int(part) <= len(names):
+            picked = [names[int(part) - 1]]
+        else:
+            raise ValueError(f"不支持的地区：{part}")
+        result += [n for n in picked if n not in result]
+    if not result:
+        raise ValueError("没有选择地区")
+    return result
 
 
 # ---------- 繁简转换 ----------

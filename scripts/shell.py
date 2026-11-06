@@ -15,7 +15,7 @@ SCRIPTS = ROOT / "scripts"
 MIGRATION = SCRIPTS / "migrations" / "2026-11-law-cleanup"
 PYTHON = sys.executable
 
-from common import REGION_CODE_MAP
+from common import REGION_CODE_MAP, parse_regions
 
 # update_all_db.sh 里直接调用 python，让它用到同一个虚拟环境
 ENV = {**os.environ, "PATH": f"{Path(PYTHON).parent}{os.pathsep}{os.environ.get('PATH', '')}"}
@@ -70,10 +70,20 @@ def download_one():
 
 
 def download_dlc():
-    region = choose("选择地区", [*REGION_CODE_MAP, "文化与旅游部"])
-    if region:
-        limit = ask("最多下载几部，0 为不限", "0")
-        run([PYTHON, "scrape.py", "download-dlc", region, "--limit", limit], SCRIPTS)
+    for i, region in enumerate(REGION_CODE_MAP, 1):
+        print(f"  {i:>2}. {region}")
+    while True:
+        spec = input("选择地区（编号，可写范围如 7-31 或 3,5,8-10；回车取消）：").strip()
+        if not spec:
+            return
+        try:
+            regions = parse_regions(spec)
+            break
+        except ValueError as e:
+            print(e)
+    print(f"共 {len(regions)} 个地区：{'、'.join(regions)}")
+    limit = ask("每个地区最多下载几部，0 为不限", "0")
+    run([PYTHON, "scrape.py", "download-dlc", *regions, "--limit", limit], SCRIPTS)
 
 
 def download_gz():
@@ -88,6 +98,18 @@ def download_state_council_decisions():
     if confirm("「另见」里的「废止和修改」「修改」「废止」部分行政法规的决定也一起下载？", default=True):
         args.append("--see-also")
     run(args, SCRIPTS)
+
+
+def download_wikisource_versions():
+    name = ask("法规名称，与维基文库页面标题一致，如 中华人民共和国律师法")
+    if name:
+        run([PYTHON, "scrape.py", "download-versions", name], SCRIPTS)
+
+
+def download_url():
+    url = ask("页面链接，目前支持维基文库")
+    if url:
+        run([PYTHON, "scrape.py", "download-url", url], SCRIPTS)
 
 
 def organize():
@@ -110,11 +132,23 @@ def lint():
         args.append("--dlc")
     if confirm("列出 warning？"):
         args.append("--warnings")
-    run(args, ROOT)
+    if run(args, ROOT) == 0:
+        return
+    # 有 error：先列出能自动修复的改动，确认后再写文件
+    if not confirm("查看能自动修复的改动？"):
+        return
+    preview = [a for a in args if a != "--warnings"]
+    run([*preview, "--diff"], ROOT)
+    if confirm("按上面的改动修复？"):
+        run([*args, "--fix"], ROOT)
 
 
 def update_db():
     run(["bash", "update_all_db.sh"], SCRIPTS)
+
+
+# download-list 的数据源
+PROVIDERS = {"国家法律法规数据库": "flk", "维基文库（各个版本都下载）": "wikisource"}
 
 
 def find_missing():
@@ -123,12 +157,17 @@ def find_missing():
     names = sorted(line.strip() for line in out.stdout.splitlines() if line.strip())
     print("\n".join(names))
     print(f"\n共 {len(names)} 个")
-    if not names or not confirm("要尝试从国家法律法规数据库下载这些法律吗？只下载标题完全一致、尚未收录的"):
+    if not names:
+        return
+    print("从哪里下载？只下载标题完全一致、尚未收录的")
+    provider = choose("来源", list(PROVIDERS))
+    if not provider:
+        print("已取消")
         return
     names_file = SCRIPTS / "__cache__" / "missing_laws.txt"
     names_file.parent.mkdir(parents=True, exist_ok=True)
     names_file.write_text("\n".join(names) + "\n", encoding="utf-8")
-    run([PYTHON, "scrape.py", "download-list", str(names_file)], SCRIPTS)
+    run([PYTHON, "scrape.py", "download-list", str(names_file), "--provider", PROVIDERS[provider]], SCRIPTS)
 
 
 def list_unexplained_expired():
@@ -152,21 +191,25 @@ def generate_migration():
 RELEASE_PATHSPEC = [":!scripts", ":!scrape", ":!.*", ":!DLC", ":!Makefile"]
 
 
-def published_hash(name: str) -> str:
+# channel 在 release 分支上的目录，prod 是根目录
+CHANNEL_DIRS = {"alpha": "alpha/", "prod": ""}
+
+
+def published_hash(name: str, channel: str = "alpha") -> str:
     try:
-        return json.loads(git("show", f"release:alpha/metadata/{name}.meta"))["hash"]
+        return json.loads(git("show", f"release:{CHANNEL_DIRS[channel]}metadata/{name}.meta"))["hash"]
     except (json.JSONDecodeError, KeyError):
         return ""
 
 
-def confirm_release(flag: str):
+def confirm_release(flag: str, channel: str = "alpha"):
     dirty = git("status", "--porcelain")
     if dirty:
         print(f"\n注意：工作区有 {len(dirty.splitlines())} 处未提交的改动。release.sh 按最后一次提交判断是否有变化，"
               "但打包的是工作区文件：要打包时，这些未提交的改动也会进入数据包。建议先提交。")
-    print("\nrelease.sh 会切到 release 分支提交并 push，发布后用户就会收到。")
-    if input("确认发布请输入 release：").strip() == "release":
-        run(["bash", "release.sh", flag], SCRIPTS)
+    print(f"\nrelease.sh 会提交到 release 分支的 {channel} channel 并 push，发布后该 channel 的用户就会收到。")
+    if input(f"确认发布到 {channel} 请输入 release：").strip() == "release":
+        run(["bash", "release.sh", flag, "--channel", channel], SCRIPTS)
     else:
         print("已取消")
 
@@ -182,23 +225,37 @@ def release_main():
 
 
 def release_dlc():
+    print("发布到哪个 channel？")
+    channel = choose("channel", list(CHANNEL_DIRS))
+    if not channel:
+        print("已取消")
+        return
     changed = []
     for folder in sorted(p for p in (ROOT / "DLC").iterdir() if p.is_dir()):
         head = git("log", "-n", "1", "--format=%H", "--", str(folder.relative_to(ROOT)), *RELEASE_PATHSPEC[:-2])
-        if head != published_hash(folder.name):
+        if head != published_hash(folder.name, channel):
             changed.append(folder.name)
-    print(f"\n有变化的 DLC：{'、'.join(changed) if changed else '没有，发布会全部跳过'}")
+    local = {p.name for p in (ROOT / "DLC").iterdir() if p.is_dir()}
+    listed = git("ls-tree", "--name-only", f"release:{CHANNEL_DIRS[channel]}metadata/").splitlines()
+    removed = sorted({Path(n).stem for n in listed} - local - {"laws"})
+    print(f"\n{channel} 上有变化的 DLC：{'、'.join(changed) if changed else '没有'}")
+    if removed:
+        print(f"仓库里已删除、发布时会从 dlc.json 移除的 DLC（zip 保留）：{'、'.join(removed)}")
+    elif not changed:
+        print("发布会全部跳过。")
     print("本体保持线上版本不动。")
-    confirm_release("--dlc")
+    confirm_release("--dlc", channel)
 
 
 MENU: List[Tuple[str, List[Tuple[str, Callable[[], None]]]]] = [
     ("抓取", [
         ("下载尚未收录的法律、行政法规和司法解释", download_all),
         ("按名称下载", download_one),
-        ("下载地方性法规或文化与旅游部规章", download_dlc),
+        ("下载地方性法规", download_dlc),
         ("从国家规章库下载部门规章", download_gz),
         ("从维基文库下载国务院修改和废止行政法规的决定", download_state_council_decisions),
+        ("从维基文库下载一部法规的全部版本", download_wikisource_versions),
+        ("按链接下载", download_url),
         ("把抓取结果整理进仓库", organize),
     ]),
     ("数据", [

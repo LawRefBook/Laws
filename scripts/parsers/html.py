@@ -12,7 +12,13 @@ from common import DATE_RE, clean, norm
 
 # 正文容器：gov.cn 文章页是 #UCAP-CONTENT
 _CONTAINERS = ["#UCAP-CONTENT", ".pages_content", ".article", "body"]
-_NOTE = re.compile(rf"^[（(]{DATE_RE}.*[）)]$")
+_NOTE = re.compile(rf"^[（(]\s*{DATE_RE}.*[）)]$")
+# 不以日期开头的题注：「（国家旅游局令第22号公布 …自2005年7月3日起施行）」「(中国银行业监督管理委员会令2007年第3号公布…)」
+_UNDATED_NOTE = re.compile(r"^[（(].*(?:公布|发布|印发|施行|实施|令第|修正|修订|通过).*[）)]$")
+
+
+def _is_note(line: str) -> bool:
+    return bool(_NOTE.match(line) or (_UNDATED_NOTE.match(line) and len(line) < 600))
 
 
 class HtmlParser:
@@ -28,6 +34,9 @@ class HtmlParser:
         content = []
         for node in container.find_all(["p", "table"]):
             if node.find_parent("table"):
+                continue
+            # 有的页面用一个 <p> 包住全文，里面才是逐段的 <p>；外层的文字会和里面重复一遍
+            if node.name == "p" and node.find("p") is not None:
                 continue
             if node.name == "table":
                 # 附件表格交给 ContentParser 的表格格式
@@ -45,8 +54,13 @@ class HtmlParser:
             line = clean(node.get_text(""))
             if not line:
                 continue
+            # 标题和题注在同一段：「人民币单位存款管理办法 （1997年11月21日…印发 自…起实施）」
+            m = re.match(r"^(.+?)\s*([（(].+[）)])$", line)
+            if not desc and not content and m and title and norm(m.group(1)) == norm(title) and _is_note(m.group(2)):
+                content.append(m.group(1))
+                line = m.group(2)
             # 标题后面的题注：「（2023年8月23日教育部令第53号公布 自2023年10月15日起施行）」
-            if not desc and _NOTE.match(line) and len(content) <= 1:
+            if not desc and _is_note(line) and len(content) <= 1:
                 desc = line
                 continue
             content.append(line)

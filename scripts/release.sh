@@ -6,17 +6,32 @@ RELEASE_BRANCH="release"
 # -f      不比较 hash，强制重新打包
 # --main  只发布本体，DLC 保持线上版本不动
 # --dlc   只发布 DLC，本体保持线上版本不动
+# --channel alpha|prod  发布到哪个 channel，默认 alpha
+#         alpha 在 release 分支的 alpha/ 下，prod 在 release 分支根目录
+USAGE="Usage: $0 [-f] [--main | --dlc] [--channel alpha|prod]"
 force=0
 pack_main=1
 pack_dlc=1
-for arg in "$@"; do
-    case "$arg" in
+channel=alpha
+while [ $# -gt 0 ]; do
+    case "$1" in
         -f) force=1 ;;
         --main) pack_dlc=0 ;;
         --dlc) pack_main=0 ;;
-        *) echo "Usage: $0 [-f] [--main | --dlc]"; exit 1 ;;
+        --channel) shift; channel="$1" ;;
+        *) echo "$USAGE"; exit 1 ;;
     esac
+    shift
 done
+case "$channel" in
+    alpha) CHANNEL_DIR="alpha" ;;
+    prod) CHANNEL_DIR="" ;;
+    *) echo "$USAGE"; exit 1 ;;
+esac
+# channel 目录里由发布管理的文件，prod 的根目录还有 CNAME、alpha/ 等不能动
+CHANNEL_PATHS=(laws.zip DLC dlc.json metadata)
+CHANNEL_PREFIX="${CHANNEL_DIR:+$CHANNEL_DIR/}"
+echo "Channel: $channel"
 if [ "$pack_main" == 0 ] && [ "$pack_dlc" == 0 ]; then
     echo "--main 和 --dlc 不能同时使用"
     exit 1
@@ -29,6 +44,9 @@ fi
 
 cd ../
 current_path=$(pwd)
+# 校验数据库要用装了 peewee 的 Python，优先用仓库的虚拟环境
+PYTHON="$current_path/.venv/bin/python"
+if [ ! -x "$PYTHON" ]; then PYTHON="python3"; fi
 
 function pack {
 
@@ -50,12 +68,21 @@ function pack {
 
     if [ "$force" == 0 ] ; then
         # Check if the metadata file exists in the release branch
-        if git show "$RELEASE_BRANCH:alpha/metadata/$output_name.meta" >/dev/null 2>&1; then
-            old_hash=$(git show "$RELEASE_BRANCH:alpha/metadata/$output_name.meta" 2>/dev/null | jq -r .hash 2>/dev/null)
+        if git show "$RELEASE_BRANCH:${CHANNEL_PREFIX}metadata/$output_name.meta" >/dev/null 2>&1; then
+            old_hash=$(git show "$RELEASE_BRANCH:${CHANNEL_PREFIX}metadata/$output_name.meta" 2>/dev/null | jq -r .hash 2>/dev/null)
             if [ -n "$old_hash" ] && [ "$old_hash" != "null" ] && [ -n "$_hash" ] && [ "$_hash" == "$old_hash" ]; then
                 echo "No changes detected $1, skipping..."
                 return
             fi
+        fi
+    fi
+
+    if [ "$1" != "." ]; then
+        # 打包前校验 DLC 数据库，失败时整个发布中止，不会提交和 push
+        echo "Checking $1/db.sqlite3"
+        if ! "$PYTHON" "$current_path/scripts/database.py" check "db.sqlite3"; then
+            echo "Check failed for $1, release aborted."
+            exit 1
         fi
     fi
 
@@ -99,6 +126,11 @@ function genJSON() {
         name=$(basename $file)
         name=${name%.*}
         name=${name%.*}
+        # 仓库里已经删掉的 DLC 不再列出，zip 和 meta 留在 release 分支上，已经下载的用户不受影响
+        if ! compgen -G "./DLC*/$name" >/dev/null; then
+            echo "Delisting $name: no longer in the repository" >&2
+            continue
+        fi
         meta=$(cat $METADATA_PATH/$name.meta)
         echo $meta"," >> $OUT_JSON_FILE
     done
@@ -110,43 +142,51 @@ function genJSON() {
 }
 
 function finalize() {
-    echo "Finalizing release..."
+    echo "Finalizing release ($channel)..."
     cd "$current_path"
 
-    _tmp_dir=$(mktemp -d)
-    cp -r "$RELEASE_FOLDER"/* "$_tmp_dir/"
+    # 在临时 worktree 里提交，不用切换当前分支，也不会碰到工作区里未跟踪的文件
+    _wt=$(mktemp -d)
+    git worktree add -q "$_wt" "$RELEASE_BRANCH" || exit 1
+    _target="$_wt/$CHANNEL_DIR"
+    mkdir -p "$_target"
 
-    _current_branch=$(git rev-parse --abbrev-ref HEAD)
+    _paths=()
+    for p in "${CHANNEL_PATHS[@]}"; do
+        rm -rf "${_target:?}/$p"
+        _paths+=("$CHANNEL_PREFIX$p")
+    done
+    cp -R "$RELEASE_FOLDER"/. "$_target/"
 
-    # Save current state
-    _stash_out=$(git stash push -m "release_temp_stash")
-    _stashed=0
-    if [[ "$_stash_out" != "No local changes to save" ]]; then
-        _stashed=1
+    git -C "$_wt" add -A -- "${_paths[@]}"
+    if git -C "$_wt" diff --cached --quiet; then
+        echo "Nothing changed in $channel, nothing to release."
+    else
+        git -C "$_wt" commit -q -m "release($channel): $(date +'%Y-%m-%d %H:%M:%S')"
+        git -C "$_wt" push || _failed=1
     fi
 
-    git checkout "$RELEASE_BRANCH"
-    rm -rf alpha/*
-    cp -r "$_tmp_dir"/* alpha/
-    git add alpha
-    git commit -m "release: $(date +'%Y-%m-%d %H:%M:%S')"
-    git push
-
-    git checkout "$_current_branch"
-    if [ $_stashed -eq 1 ]; then
-        git stash pop
+    git worktree remove --force "$_wt"
+    if [ -n "$_failed" ]; then
+        echo "Push failed. The commit stays on the local $RELEASE_BRANCH branch; push it manually."
+        exit 1
     fi
-
-    rm -rf "$_tmp_dir"
     echo "Release finalized."
 }
 
-# check out release branch alpha folder to ./release folder
+# 把 release 分支上该 channel 的现有内容取到 ./.release，作为打包的基础
 rm -rf $RELEASE_FOLDER
-git restore --source $RELEASE_BRANCH --worktree -- alpha
-mv alpha $RELEASE_FOLDER
+mkdir -p $RELEASE_FOLDER
+_existing=()
+for p in "${CHANNEL_PATHS[@]}"; do
+    if git cat-file -e "$RELEASE_BRANCH:$CHANNEL_PREFIX$p" 2>/dev/null; then _existing+=("$p"); fi
+done
+if [ ${#_existing[@]} -gt 0 ]; then
+    git archive "$RELEASE_BRANCH:$CHANNEL_DIR" -- "${_existing[@]}" | tar -x -C $RELEASE_FOLDER || exit 1
+fi
 
 packall
-genJSON
+# 只发布本体时 DLC 不动，沿用线上的 dlc.json
+if [ "$pack_dlc" == 1 ]; then genJSON; fi
 finalize
 

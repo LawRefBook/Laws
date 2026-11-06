@@ -4,7 +4,7 @@ from model.law import FetchedDocumentResponse, FetchedLawResponse, LawListItem
 
 from .base import Provider
 from .cache_provider import CacheType
-from .net import session
+from . import net
 
 
 class NationalLawDatabaseProvider(Provider):
@@ -24,8 +24,8 @@ class NationalLawDatabaseProvider(Provider):
     NOT_YET_VALID = 4  # 尚未生效
     ALL_VALIDITY = [NOT_YET_VALID, VALID, AMENDED, ABOLISHED]
 
-    def fetch(self, page_num=1, page_size=20, **kwargs) -> FetchedLawResponse:
-        response = self.__search(
+    async def fetch(self, page_num=1, page_size=20, **kwargs) -> FetchedLawResponse:
+        response = await self.__search(
             page_num=page_num,
             page_size=page_size,
             **kwargs
@@ -51,17 +51,16 @@ class NationalLawDatabaseProvider(Provider):
             items=list(map(map_item, rows)),
         )
 
-    def fetch_document(self, law: LawListItem) -> FetchedDocumentResponse:
+    async def fetch_document(self, law: LawListItem) -> FetchedDocumentResponse:
         full_url = f"{self.BASE_URL}/law-search/download/pc?format=docx&bbbs={law.id}"
-        response = session.get(full_url, headers=self.HEADERS)
-        response.raise_for_status()
-        download_url = response.json().get("data", {}).get("url", "")
+        response = await net.get_json("GET", full_url, headers=self.HEADERS)
+        download_url = (response.get("data") or {}).get("url", "")
         if not download_url:
             raise ValueError("接口没有返回下载地址")
-        path = self.cache_manager.download_binary(download_url, CacheType.WordDocument)
+        path = await self.cache_manager.download_binary(download_url, CacheType.WordDocument)
         return FetchedDocumentResponse(law=law, path_to_file=path)
 
-    def __search(self, page_num=1, page_size=20, **kwargs) -> dict:
+    async def __search(self, page_num=1, page_size=20, **kwargs) -> dict:
         use_high_search = kwargs.get("use_high_search", False)
 
         if use_high_search:
@@ -97,6 +96,4 @@ class NationalLawDatabaseProvider(Provider):
         if use_high_search:
             url = self.BASE_URL + "/law-search/highSearch/highSearch"
 
-        response = session.post(url, headers=self.HEADERS, json=payload)
-        response.raise_for_status()
-        return response.json()
+        return await net.get_json("POST", url, headers=self.HEADERS, json=payload)

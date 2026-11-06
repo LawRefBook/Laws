@@ -31,8 +31,13 @@ def parse_desc(desc: str) -> List[str]:
         if not re.match(DATE_RE, part):
             continue
         date = re.match(DATE_RE, part).group(0)
-        part = norm(date) + " " + part[len(date):].strip()
-        ret.append(part.replace("起施行", "施行"))
+        event = part[len(date):].strip()
+        # 「起实施」「实施」「起执行」都按施行写，database.py 从「X年X月X日 施行」读生效日期
+        event = re.sub(r"^(?:起施行|起?实施|起?执行)$", "施行", event.replace("起施行", "施行"))
+        if not event:
+            # 只有日期没有事件，如「（国家林业局令第2号 1999年4月22日）」拆开后的残留
+            continue
+        ret.append(norm(date) + " " + event)
     return ret
 
 
@@ -190,6 +195,10 @@ class ContentParser(object):
         for i, line in enumerate(lines[:10]):
             if norm(line) == norm(title):
                 del lines[i]
+                break
+            # 标题分成两段：「大同市人民代表大会常务委员会」「讨论决定重大事项的规定」
+            if i + 1 < len(lines) and norm(line + lines[i + 1]) == norm(title):
+                del lines[i:i + 2]
                 break
         lines = drop_toc(lines)
         lines = drop_announcement(lines)

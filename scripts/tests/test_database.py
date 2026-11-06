@@ -9,7 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from database import (Category, Database, Law, Relationship, effective_date,  # noqa: E402
-                      extract_decision_abolished_names, extract_decision_amended_names, extract_valid_from)  # noqa: E402
+                      extract_abolished_law_names, extract_decision_abolished_names, extract_decision_amended_names, extract_valid_from)  # noqa: E402
 
 
 def law_text(title, body, header=("2020年1月1日 通过",)):
@@ -87,6 +87,30 @@ class DecisionAbolishTest(unittest.TestCase):
             "附件1 国务院决定废止的行政法规目录（49件）", "<!-- TABLE -->",
             "| 序号  |法规名称  |公布机关及日期  |", "|-----|-----|-----|", "| 1  |铁路留用土地办法  |1950年6月24日政务院公布  |",
             "<!-- TABLE END -->"), ["铁路留用土地办法"])
+
+
+class AbolishClauseTest(unittest.TestCase):
+
+    def names(self, *body, header=("2020年1月1日 通过",)):
+        return extract_abolished_law_names(law_text("某法", body, header))
+
+    def test_names_separated_by_dates(self):
+        self.assertEqual(self.names(
+            "第六十条 本法自2008年1月1日起施行。1991年4月9日第七届全国人民代表大会第四次会议通过的"
+            "《中华人民共和国外商投资企业和外国企业所得税法》和1993年12月13日国务院发布的"
+            "《中华人民共和国企业所得税暂行条例》同时废止。"),
+            ["企业所得税暂行条例", "外商投资企业和外国企业所得税法"])
+
+    def test_listed_without_title_marks(self):
+        self.assertEqual(self.names(
+            "附件一", "全国人民代表大会常务委员会制定的下列条例、补充规定和决定，已纳入本法或者已不适用，自本法施行之日起，予以废止：",
+            "1. 中华人民共和国惩治军人违反职责罪暂行条例", "2. 关于惩治走私罪的补充规定", "附件二",
+            "3. 不在名单里"), ["惩治军人违反职责罪暂行条例", "关于惩治走私罪的补充规定"])
+
+    def test_partial_repeal_and_header_ignored(self):
+        self.assertEqual(self.names(
+            "第五条 《最高人民法院关于审理劳动争议案件适用法律问题的解释（一）》（法释〔2020〕26号）第三十二条第一款同时废止。",
+            header=("2008年1月1日 《中华人民共和国外商投资企业和外国企业所得税法》废止",)), [])
 
 class UpdateTest(unittest.TestCase):
 
@@ -208,6 +232,39 @@ class UpdateTest(unittest.TestCase):
             ("统计法实施条例", "统计法"),
             ("民族统计工作管理办法", "统计法"),
         })
+
+    def test_dlc_implements_points_to_main_database(self):
+        self.write("法律/义务教育法(1986-04-12).md", law_text("义务教育法", ["第一条 内容"]))
+        self.write("法律/义务教育法(2018-12-29).md", law_text("义务教育法", ["第一条 内容"]))
+        self.write("法律/统计法(2009-06-27).md", law_text("统计法", ["第一条 内容"]))
+        self.update()
+        main = {(law.name, law.publish): law.id for law in Law.select()}
+
+        dlc = self.root / "DLC" / "北京地方法规"
+        self.write(dlc / "地方性法规/北京/北京市实施《中华人民共和国义务教育法》办法(2019-05-01).md",
+                   law_text("北京市实施《中华人民共和国义务教育法》办法", ["第一条 内容"]))
+        self.write(dlc / "地方性法规/北京/北京市统计条例(2020-01-01).md",
+                   law_text("北京市统计条例", ["第一条 根据《中华人民共和国统计法》，结合本市实际，制定本条例。"]))
+        with redirect_stdout(io.StringIO()):
+            count = Database(dlc / "db.sqlite3").update_database()
+        self.assertEqual(count["created"], 2)
+        local = {law.id: law.name for law in Law.select()}
+        self.assertEqual(
+            {(local[r.source_id], r.target_id) for r in Relationship.select().where(Relationship.type == Relationship.IMPLEMENTS)},
+            {("北京市实施《中华人民共和国义务教育法》办法", main[("义务教育法", "2018-12-29")]),
+             ("北京市统计条例", main[("统计法", "2009-06-27")])})
+        # 本体的法规不会写进 DLC 数据库
+        self.assertEqual(set(local.values()), {"北京市实施《中华人民共和国义务教育法》办法", "北京市统计条例"})
+
+        # implements 指向本体没问题；abolishes、amends 指向本库以外的法规要报出来
+        db = Database(dlc / "db.sqlite3")
+        self.assertEqual(db.check(), [])
+        source = self.law("北京市统计条例")
+        for type in (Relationship.ABOLISHES, Relationship.AMENDS):
+            Relationship.create(source_id=source.id, target_id=main[("统计法", "2009-06-27")], type=type)
+        problems = db.check()
+        self.assertEqual(len(problems), 2)
+        self.assertTrue(all("北京市统计条例" in p for p in problems))
 
     def test_expiry_restored_after_rename(self):
         self.write("行政法规/甲规定(2007-09-19).md", law_text("甲规定", ["第一条 内容"]))

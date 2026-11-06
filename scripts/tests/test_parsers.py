@@ -17,7 +17,7 @@ from parsers.content import (ContentParser, drop_announcement, drop_toc,  # noqa
 from common import is_traditional  # noqa: E402
 from parsers.epub import EpubParser  # noqa: E402
 from parsers.html import HtmlParser  # noqa: E402
-from providers.gov_regulation_database import dates_from_note  # noqa: E402
+from providers.gov_regulation_database import dated_note, dates_from_note  # noqa: E402
 from parsers.word import WordParser  # noqa: E402
 from providers.cache_provider import CacheManager  # noqa: E402
 
@@ -129,6 +129,9 @@ class HeadingTest(unittest.TestCase):
     def test_title_removed_from_body(self):
         out = parse("巴中市人民代表大会及其常务委员会立法条例", "", ["巴中市人民代表大会及其常务委员会 立法条例", "第一条 内容"])
         self.assertEqual(out[2:], ["第一条 内容"])
+        out = parse("大同市人民代表大会常务委员会讨论决定重大事项的规定", "",
+                    ["大同市人民代表大会常务委员会", "讨论决定重大事项的规定", "第一条 内容"])
+        self.assertEqual(out[2:], ["第一条 内容"])
 
 
 class WordParserTest(unittest.TestCase):
@@ -159,6 +162,37 @@ class WordParserTest(unittest.TestCase):
         _, desc, content = self.parse_paragraphs("某条例", ["", "某条例", "​", "（2020年1月1日通过）", "", "第一条　内容"])
         self.assertEqual(desc, "（2020年1月1日通过）")
         self.assertEqual(content, ["某条例", "第一条 内容"])
+
+    def test_desc_without_closing_paren_ends_at_first_article(self):
+        _, desc, content = self.parse_paragraphs("大同市规定", [
+            "大同市人民代表大会常务委员会\ue003", "规定", "（2000年3月2日通过\u30002004年9月25日批准）\ue003", "\ue004", "第一条 内容"])
+        self.assertEqual(desc, "（2000年3月2日通过 2004年9月25日批准）")
+        self.assertEqual(content, ["大同市人民代表大会常务委员会", "规定", "第一条 内容"])
+        _, desc, content = self.parse_paragraphs("某条例", ["（2000年3月2日通过", "第一条 内容"])
+        self.assertEqual((desc, content), ("（2000年3月2日通过", ["第一条 内容"]))
+
+    def test_auto_numbering(self):
+        from docx.oxml import parse_xml
+        document = Document()
+        numbering = document.part.numbering_part.element
+        w = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+        numbering.append(parse_xml(
+            f'<w:abstractNum {w} w:abstractNumId="90"><w:lvl w:ilvl="0"><w:start w:val="1"/>'
+            '<w:numFmt w:val="chineseCounting"/><w:lvlText w:val="第%1章"/></w:lvl>'
+            '<w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="chineseCounting"/><w:lvlText w:val="（%2）"/></w:lvl></w:abstractNum>'))
+        numbering.append(parse_xml(f'<w:num {w} w:numId="90"><w:abstractNumId w:val="90"/></w:num>'))
+        numbering.append(parse_xml(f'<w:abstractNum {w} w:abstractNumId="91"><w:lvl w:ilvl="0"><w:start w:val="12"/>'
+                                   '<w:numFmt w:val="taiwaneseCountingThousand"/><w:lvlText w:val="第%1条"/></w:lvl></w:abstractNum>'))
+        numbering.append(parse_xml(f'<w:num {w} w:numId="91"><w:abstractNumId w:val="91"/></w:num>'))
+        for text, num_id, ilvl in (("总则", 90, 0), ("内容", 90, 1), ("内容", 90, 1), ("附则", 90, 0), ("内容", 90, 1),
+                                   ("内容", 91, 0), ("没有编号", None, None)):
+            p = document.add_paragraph(text)
+            if num_id is not None:
+                num_pr = p._p.get_or_add_pPr().get_or_add_numPr()
+                num_pr.get_or_add_numId().val = num_id
+                num_pr.get_or_add_ilvl().val = ilvl
+        _, _, content = WordParser().parse_document(document, "某条例")
+        self.assertEqual(content, ["第一章 总则", "（一）内容", "（二）内容", "第二章 附则", "（一）内容", "第十二条 内容", "没有编号"])
 
     def test_title_and_desc_in_one_paragraph(self):
         _, desc, content = self.parse_paragraphs("河北省条例", ["河北省条例 （2017年12月1日河北省人大常委会通过）", "第一条 内容"])
@@ -373,6 +407,47 @@ class GovRegulationTest(unittest.TestCase):
             "第一条 为了规范，制定本办法。",
             "第二条 本办法自2023年10月15日起施行。",
         ])
+
+    def test_dated_note(self):
+        cases = [
+            # 开头没有日期，补上发布日期
+            ("（国家旅游局令第22号公布 自2005年7月3日起施行）", "2005-09-26",
+             ["2005年9月26日 国家旅游局令第22号公布", "2005年7月3日 施行"]),
+            # 还有修订日期时不补，发布日期多半是修订那次的
+            ("(某委员会令2007年第3号公布，根据2008年12月17日某会议修订)", "2008-12-17", ["2008年12月17日 某会议修订"]),
+            # 只有施行日期
+            ("（自2025年7月1日起施行）", "2025-03-10", ["2025年7月1日 施行"]),
+            ("(本规定自2008年2月14日起施行)", "2008-01-14", ["2008年2月14日 施行"]),
+            # 日期在末尾
+            ("（国家林业局令第2号 1999年4月22日）", "1999-04-22", ["1999年4月22日 国家林业局令第2号"]),
+            # ISO 日期、「实施」
+            ("（2016-02-16财政部令第80号公布 2016-05-01实施）", "2016-02-16", ["2016年2月16日 财政部令第80号公布", "2016年5月1日 施行"]),
+            ("（1997年11月21日银发〔1997〕485号文印发 自1997年11月21日起实施）", None, ["1997年11月21日 银发〔1997〕485号文印发", "1997年11月21日 施行"]),
+        ]
+        for note, publish, want in cases:
+            with self.subTest(note):
+                self.assertEqual(parse_desc(dated_note(note, publish)), want)
+        self.assertEqual(dated_note(None, "2020-01-01"), "")
+
+    def html(self, body):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "content_1.htm"
+            path.write_text(f'<html><body><div id="UCAP-CONTENT">{body}</div></body></html>', encoding="utf-8")
+            return HtmlParser().parse_document(path, "某办法")
+
+    def test_html_undated_note_and_title_in_one_paragraph(self):
+        _, desc, content = self.html("<p>某办法</p><p>( 国家旅游局令第22号公布 自2005年7月3日起施行)</p><p>第一条 内容</p>")
+        self.assertEqual((desc, content), ("( 国家旅游局令第22号公布 自2005年7月3日起施行)", ["第一条 内容"]))
+        _, desc, content = self.html("<p>某办法 （1997年11月21日银发〔1997〕485号文印发 自1997年11月21日起实施）</p><p>第一条 内容</p>")
+        self.assertEqual(desc, "（1997年11月21日银发〔1997〕485号文印发 自1997年11月21日起实施）")
+        self.assertEqual(content, ["第一条 内容"])
+        # 正文里的括号段落不算题注
+        _, desc, content = self.html("<p>某办法</p><p>第一条 内容</p><p>（本条自公布之日起施行）</p>")
+        self.assertEqual((desc, content), ("", ["第一条 内容", "（本条自公布之日起施行）"]))
+
+    def test_html_nested_paragraphs(self):
+        _, _, content = self.html("<p><p>第一条 甲</p><p>第二条 乙</p></p>".replace("<p><p>", "<p><span>x</span><p>"))
+        self.assertEqual(content, ["第一条 甲", "第二条 乙"])
 
 
 if __name__ == "__main__":

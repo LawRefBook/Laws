@@ -10,7 +10,7 @@ from model.law import FetchedDocumentResponse, FetchedLawResponse, LawListItem
 
 from .base import Provider
 from .cache_provider import CacheType
-from .net import session
+from . import net
 
 # 国家规章库的部门名 → 仓库里已有的目录名
 DEPARTMENT_FOLDERS = {
@@ -44,6 +44,32 @@ def dates_from_note(note: str):
     return publish, None
 
 
+def dated_note(note: str, publish: Optional[str]) -> str:
+    """把题注整理成头部能按日期拆开的样子：
+
+    「（国家旅游局令第22号公布 自2005年7月3日起施行）」开头补上发布日期；
+    「（国家林业局令第2号 1999年4月22日）」日期挪到开头；
+    「2016-02-16财政部令第80号公布 2016-05-01实施」换成「2016年2月16日…」。
+    题注里有施行以外的日期、或者只写了施行日期时不补，免得把别的日期当成发布日期。
+    """
+    note = re.sub(r"^[（(]\s*|\s*[）)]$", "", (note or "").strip())
+    note = re.sub(r"(\d{4})-(\d{1,2})-(\d{1,2})", lambda m: f"{int(m.group(1))}年{int(m.group(2))}月{int(m.group(3))}日", note)
+    if not note:
+        return ""
+    if not _DATE.match(note):
+        tail = re.match(r"^(.*?)[\s，,]*(\d{4}年\d{1,2}月\d{1,2}日)$", note)
+        if tail and not _DATE.search(tail.group(1)):
+            note = f"{tail.group(2)}{tail.group(1)}"
+    m = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", publish or "")
+    other_dates = [d for d in _DATE.finditer(note) if not re.match(r"起?(?:施行|实施|执行)", note[d.end():])]
+    first = _DATE.search(note)
+    # 第一个日期前面有实际内容（「…令第22号公布」），不只是「自」「本规定自」
+    leading = re.sub(r"[\s，,]|本(?:规定|办法|细则|决定)?自$|自$", "", note[:first.start()] if first else note)
+    if not _DATE.match(note) and m and not other_dates and leading:
+        note = f"{int(m.group(1))}年{int(m.group(2))}月{int(m.group(3))}日" + note
+    return f"（{note}）"
+
+
 class GovRegulationDatabaseProvider(Provider):
     URL = "https://sousuoht.www.gov.cn/athena/forward/BD8730CDDA12515E2D9E1B21AA11C0D6"
     HEADERS = {
@@ -69,7 +95,7 @@ class GovRegulationDatabaseProvider(Provider):
     URL_FIELD = "doc_pub_url"
     DEPARTMENT_RULE = 1
 
-    def fetch(self, page_num=1, page_size=20, department: Optional[str] = None, search_word: str = "",
+    async def fetch(self, page_num=1, page_size=20, department: Optional[str] = None, search_word: str = "",
               **kwargs) -> FetchedLawResponse:
         """department 为空时取全部部门规章。"""
         fields = [
@@ -90,9 +116,7 @@ class GovRegulationDatabaseProvider(Provider):
             "pageSize": str(page_size),
             "granularity": "ALL",
         }
-        response = session.post(self.URL, headers=self.HEADERS, json=payload)
-        response.raise_for_status()
-        data = response.json()["result"]["data"]
+        data = (await net.get_json("POST", self.URL, headers=self.HEADERS, json=payload))["result"]["data"]
 
         items = []
         for row in data.get("list", []):
@@ -110,6 +134,7 @@ class GovRegulationDatabaseProvider(Provider):
                 # 写到 out/部门规章/<部门>/
                 type=f"部门规章/{DEPARTMENT_FOLDERS.get(department_name, department_name)}",
                 file_link=url,
+                note=row.get(self.NOTE) or None,
             ))
         return FetchedLawResponse(total=data["pager"]["total"], items=items)
 
@@ -123,7 +148,13 @@ class GovRegulationDatabaseProvider(Provider):
                 return re.split(r"[、，,\s]+", value.strip())[0]
         return "其他"
 
-    def fetch_document(self, law: LawListItem) -> FetchedDocumentResponse:
-        path = self.cache_manager.download_binary(
+    async def note(self, law: LawListItem) -> str:
+        return dated_note(law.note, law.publication_date)
+
+    async def header_note(self, law: LawListItem, desc: str) -> str:
+        return dated_note(desc, law.publication_date) if desc else await self.note(law)
+
+    async def fetch_document(self, law: LawListItem) -> FetchedDocumentResponse:
+        path = await self.cache_manager.download_binary(
             law.file_link, CacheType.HtmlPage, headers={"User-Agent": self.HEADERS["User-Agent"]})
         return FetchedDocumentResponse(law=law, path_to_file=path)

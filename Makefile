@@ -1,7 +1,7 @@
 PYTHON := .venv/bin/python
 
 .DEFAULT_GOAL := shell
-.PHONY: shell lint test setup
+.PHONY: shell lint lint-fix test setup
 
 # 交互菜单：抓取、整理、检查、更新数据库、发布
 shell: | $(PYTHON)
@@ -9,6 +9,10 @@ shell: | $(PYTHON)
 
 lint: | $(PYTHON)
 	@$(PYTHON) scripts/lint.py
+
+# 自动修复能按规则修好的格式问题（含 DLC），再检查一遍
+lint-fix: | $(PYTHON)
+	@$(PYTHON) scripts/lint.py --dlc --fix
 
 test: | $(PYTHON)
 	@$(PYTHON) -m unittest discover scripts/tests

@@ -2,10 +2,12 @@
 
     python3 database.py update <db.sqlite3>   # 入库、同步目录、计算生效和失效日期
     python3 database.py drop <db.sqlite3>     # 清空重建，会重新生成全部 ID
+    python3 database.py check <db.sqlite3>    # 发布前校验，有问题时退出码为 1
 
 update 在一个事务里完成，中途出错不会留下改了一半的数据。
 """
 import re
+import sqlite3
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -90,8 +92,11 @@ class Relationship(BaseModel):
     abolishes   另一部法规写明「《某法》同时废止」
     amends      国务院修改行政法规的决定修改了 target，target 是修改前的版本
     implements  source 是 target 的实施条例、实施细则或解释，按名称判断；
-                部门规章、行政法规还看第一条「根据《某法》…制定本办法」写明的立法依据
+                部门规章、行政法规、地方性法规还看第一条「根据《某法》…制定本办法」写明的立法依据
     date 是 target 失效的日期；amends 是决定施行的日期；implements 为空。
+
+    DLC 数据库里 implements 的 target 可以是本体数据库的法规（如「北京市实施《义务教育法》办法」
+    指向本体的义务教育法），target_id 是本体里的 ID，在 DLC 数据库里查不到。
     """
     SUPERSEDES = "supersedes"
     ABOLISHES = "abolishes"
@@ -196,13 +201,33 @@ def effective_date(content: str, publish: Optional[str]) -> Optional[str]:
 def extract_abolished_law_names(content: str) -> List[str]:
     # 匹配紧邻「（同时）废止」之前、由、和，分隔的连续《...》法律名
     # 避免匹配「修改或者废止」「修订、废止」等无具体法律名的情形
-    names = []
+    # 头部是本法自己的沿革，「2008年1月1日 《某法》废止、…本条例废止」不是本法废止某法
+    _, sep, body = content.partition("<!-- INFO END -->")
+    text = body if sep else content
+    found = []
     clause = re.compile(r"((?:《[^》]+》[、和，]?)+)(?:同时)?废止")
-    for m in clause.finditer(content):
-        for name_m in re.finditer(r"《([^》]+)》", m.group(1)):
-            # 去除「中华人民共和国」前缀以匹配数据库中存储的法律名
-            names.append(re.sub(r"^中华人民共和国", "", name_m.group(1)))
-    return names
+    for m in clause.finditer(text):
+        found += re.findall(r"《([^》]+)》", m.group(1))
+    # 「1991年…通过的《A》和1993年…发布的《B》同时废止」：名称之间隔着日期和机关，取这一句里的全部
+    for m in re.finditer(r"([^。；\n]*)同时废止", text):
+        # 「《…解释（一）》（法释〔2020〕26号）第三十二条第一款同时废止」只废止其中一款，不算
+        for name_m in re.finditer(r"《([^》]+)》([^《]*)", m.group(1)):
+            if not re.search(r"第[一二三四五六七八九十百千\d]+[条款项]", name_m.group(2)):
+                found.append(name_m.group(1))
+    # 刑法附件一：「…下列条例、补充规定和决定…予以废止：」之后逐条列出，名称不带书名号
+    listing = False
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if re.search(r"废止[：:]$", line):
+            listing = True
+        elif listing and (item := _LIST_ITEM.match(line)):
+            found.append(item.group(1).strip("《》。；; "))
+        else:
+            listing = False
+    # 去除「中华人民共和国」前缀以匹配数据库中存储的法律名
+    return list(dict.fromkeys(re.sub(r"^中华人民共和国", "", n) for n in found))
 
 
 
@@ -317,6 +342,7 @@ _BASIS = re.compile(r"(?:根据|依据|依照)(.*?)制定本")
 BASIS_TARGET_LEVELS = {
     "部门规章": ("法律", "行政法规"),
     "行政法规": ("法律",),
+    "地方性法规": ("法律", "行政法规"),
 }
 
 
@@ -334,12 +360,16 @@ def extract_basis_law_names(content: str) -> List[str]:
 # ---------- 数据库 ----------
 
 class Database(object):
-    def __init__(self, sqlite_file: Path) -> None:
+    def __init__(self, sqlite_file: Path, readonly: bool = False) -> None:
         self.tables = [Category, Law, Relationship]
         self.sqlite_file = sqlite_file.resolve()
         self.db = database
-        self.db.init(str(self.sqlite_file))
-        self.prepare()
+        if readonly:
+            # 只读打开，不补表，check 不会改动数据库文件
+            self.db.init(f"{self.sqlite_file.as_uri()}?mode=ro", uri=True)
+        else:
+            self.db.init(str(self.sqlite_file))
+            self.prepare()
 
     def prepare(self):
         if self.sqlite_file.exists():
@@ -363,6 +393,36 @@ class Database(object):
     @property
     def lookup_path(self) -> Path:
         return self.sqlite_file.parent
+
+    @property
+    def base_sqlite_file(self) -> Optional[Path]:
+        """DLC（<仓库>/DLC/<名称>/db.sqlite3）对应的本体数据库，本体自己返回 None。"""
+        parts = self.sqlite_file.parts
+        if "DLC" not in parts[:-1]:
+            return None
+        root = Path(*parts[:len(parts) - 1 - parts[::-1].index("DLC")])
+        return root / "db.sqlite3"
+
+    def base_laws(self) -> Tuple[List["Law"], Dict]:
+        """本体数据库里的法规和目录，只读，作为 DLC 里实施关系的 target。不入 DLC 数据库。"""
+        base = self.base_sqlite_file
+        if base is None:
+            return [], {}
+        if not base.exists():
+            print(f"⚠️ 找不到本体数据库 {base}，DLC 只在自己内部查找实施关系")
+            return [], {}
+        conn = sqlite3.connect(f"{base.as_uri()}?mode=ro", uri=True)
+        try:
+            categories = {c.id: c for c in (
+                Category(id=id, name=name, folder=folder)
+                for id, name, folder in conn.execute('SELECT id, name, folder FROM category'))}
+            laws = [Law(id=id, name=name, level=level, publish=publish, valid_from=valid_from,
+                        order=order, category_id=category_id)
+                    for id, name, level, publish, valid_from, order, category_id in conn.execute(
+                        'SELECT id, name, level, publish, valid_from, "order", category_id FROM law')]
+        finally:
+            conn.close()
+        return laws, categories
 
     # ---------- 文件 ----------
 
@@ -408,6 +468,20 @@ class Database(object):
             if path := self.resolve(law, categories):
                 ret.append((law, path))
         return ret
+
+    # ---------- check ----------
+
+    # 只有 implements 可以指向本体数据库，这些关系的 target 必须在本库里
+    LOCAL_TARGET_TYPES = (Relationship.AMENDS, Relationship.ABOLISHES)
+
+    def check(self) -> List[str]:
+        """发布前的校验，返回问题列表。"""
+        if not Relationship.table_exists():
+            return []
+        names = {law.id: law.name for law in Law.select(Law.id, Law.name)}
+        return [f"{r.type}：{names.get(r.source_id, r.source_id)} → target {r.target_id.hex} 不在本库里"
+                for r in Relationship.select().where(Relationship.type.in_(self.LOCAL_TARGET_TYPES))
+                if r.target_id not in names]
 
     # ---------- update ----------
 
@@ -604,8 +678,13 @@ class Database(object):
         return count
 
     def invalidate_laws(self) -> int:
-        """正文写明「《某法》同时废止」的，某法最后一个版本在本法生效时失效。案例只是引述，不算。"""
+        """正文写明「《某法》同时废止」的，某法最后一个版本在本法生效时失效。案例只是引述，不算。
+
+        新法的后续版本往往保留「《某法》同时废止」，几部法规都写了的，取最早生效的那一部。
+        """
         count = 0
+        # 被废止的版本 id → (生效日期, 废止它的法规, 被废止的版本)
+        earliest: Dict = {}
         for law, path in self.resolved_laws():
             if law.level == "案例":
                 continue
@@ -630,12 +709,15 @@ class Database(object):
                 # 否则多为同名但实为另一部法律（如旧《国家安全法》→《反间谍法》）
                 if last.publish and last.publish >= valid_from:
                     continue
-                Relationship.relate(law, last, Relationship.ABOLISHES, valid_from)
-                if last.valid_to != valid_from:
-                    last.valid_to = valid_from
-                    last.save()
-                    print(f"✅ {last} 因《{law.name}》废止于 {valid_from}")
-                    count += 1
+                if last.id not in earliest or valid_from < earliest[last.id][0]:
+                    earliest[last.id] = (valid_from, law, last)
+        for valid_from, law, last in earliest.values():
+            Relationship.relate(law, last, Relationship.ABOLISHES, valid_from)
+            if last.valid_to != valid_from:
+                last.valid_to = valid_from
+                last.save()
+                print(f"✅ {last} 因《{law.name}》废止于 {valid_from}")
+                count += 1
         return count
 
 
@@ -644,11 +726,13 @@ class Database(object):
 
         同名多个版本时取本文件生效时已发布的最新版本，都晚于本文件的取最早的版本。
         民法典这类按编拆开的，名称里写了哪一编就指向那一编，否则指向第一编。
+        DLC 还会在本体数据库里找 target，source 只来自自己。
         """
-        categories = {c.id: c for c in Category.select()}
+        base_laws, base_categories = self.base_laws()
+        categories = {**base_categories, **{c.id: c for c in Category.select()}}
         by_name = defaultdict(list)
         parts = defaultdict(list)
-        for law in Law.select():
+        for law in [*Law.select(), *base_laws]:
             by_name[law.name].append(law)
             category = categories.get(law.category_id)
             if category and law.name.startswith(f"{category.name} "):
@@ -692,10 +776,19 @@ class Database(object):
 def main():
     args = sys.argv[1:]
     if len(args) != 2:
-        print("Usage: python3 database.py <update|drop> <sqlite_file>")
+        print("Usage: python3 database.py <update|drop|check> <sqlite_file>")
         return 1
     command = args[0]
-    db = Database(Path(args[1]))
+    if command == "check" and not Path(args[1]).is_file():
+        print(f"找不到数据库 {args[1]}")
+        return 1
+    db = Database(Path(args[1]), readonly=command == "check")
+
+    if command == "check":
+        problems = db.check()
+        for problem in problems:
+            print(f"❌ {problem}")
+        return 1 if problems else 0
 
     if command == "drop":
         db.reset()

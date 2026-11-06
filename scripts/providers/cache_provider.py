@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Dict, List, Set
 
 from common import CACHE_DIR
-from providers.net import session
+from providers import net
 
 logger = logging.getLogger(__name__)
 
@@ -27,21 +27,14 @@ class CacheManager(object):
     def out_path(self) -> Path:
         return self.base_path / "out"
 
-    def download_binary(self, url: str, type: CacheType, headers=None, filename: str = None) -> Path:
+    async def download_binary(self, url: str, type: CacheType, headers=None, filename: str = None) -> Path:
         # https://flkoss.obs-bj2.cucloud.cn/prod/20251128/5f98d6b9eca7456aa8e53a9f73ef7c7e.docx
         # 取 URL 里的文件名 `5f98d6b9eca7456aa8e53a9f73ef7c7e.docx`；URL 里没有文件名时由调用方给
         filename = filename or urllib.parse.urlparse(url).path.split("/")[-1]
         path = self.__get_path(filename, type)
         if path.exists():
             return path
-        response = session.get(url, headers=headers, stream=True)
-        response.raise_for_status()
-        # 先写临时文件，中断时不会留下半个文件被当成缓存
-        tmp = path.with_name(path.name + ".part")
-        with open(tmp, "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
-        tmp.rename(path)
+        await net.download(url, path, headers=headers)
         return path
 
     def __get_path(self, key: str, type: CacheType) -> Path:

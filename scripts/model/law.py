@@ -15,6 +15,8 @@ class LawListItem:
     in_effect_date: str | None = None
     type_code: int | None = None
     file_link: str | None = None
+    # 数据源给的题注「（…公布 自…起施行）」，原文里没有时写进头部
+    note: str | None = None
 
     @property
     def short_title(self) -> str:

@@ -3,33 +3,37 @@
 
     .venv/bin/python scripts/scrape.py download <名称>
     .venv/bin/python scripts/scrape.py download-all [--limit N]
-    .venv/bin/python scripts/scrape.py download-dlc <地区|文化与旅游部> [--limit N]
+    .venv/bin/python scripts/scrape.py download-dlc <地区> [--limit N]
+    .venv/bin/python scripts/scrape.py download-list <名单> [--provider flk|wikisource]
     .venv/bin/python scripts/scrape.py organize [--apply] [--force]
 
-下载结果写到 __cache__/out/，organize 再把它们移进仓库。
+下载结果写到 __cache__/out/，organize 再把它们移进仓库。默认同时下载 4 部，
+用 `scrape.py --jobs N <命令>` 调整，被限流时调小。
 """
+import asyncio
 import difflib
+import functools
 import itertools
 import re
 import subprocess
 import sys
-import time
+import threading
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
+from typing import AsyncIterable, Callable, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 import click
-import requests
 import tqdm
 import lint
-from common import CACHE_DIR, REGION_CODE_MAP, ROOT, is_manual_law, short_title
+from common import CACHE_DIR, REGION_CODE_MAP, ROOT, is_manual_law, parse_regions, short_title
 from docx import Document
 from model.law import LawListItem
 from parsers.content import ContentParser
 from parsers.epub import EpubParser
 from parsers.html import HtmlParser
 from parsers.word import WordParser
-from providers import (CultureAndTourismDatabaseProvider, GovRegulationDatabaseProvider,
-                       NationalLawDatabaseProvider, Provider, WikisourceProvider)
+from providers import net
+from providers import (GovRegulationDatabaseProvider, NationalLawDatabaseProvider, Provider,
+                       WikisourceProvider)
 from providers.cache_provider import CacheManager
 
 
@@ -37,6 +41,11 @@ LAW_FILE = re.compile(r"^(.+?)(?:\((\d{4}-\d{2}-\d{2})\))?\.md$")
 REPO_SKIP = {"scripts", ".venv", ".release", ".git", ".github"}
 
 PathModifier = Callable[[Path], Path]
+
+# 同时下载几部，也是同时打开的连接数上限。时间几乎都花在等网络上，解析一部只要几十毫秒
+JOBS = 4
+# 解析在线程里跑，LibreOffice 同一时间只能跑一个转换
+_SOFFICE = threading.Lock()
 
 
 class ProcessError(Exception):
@@ -126,10 +135,11 @@ def convert_to_docx(p: Path) -> Path:
     if docx.exists():
         return docx
     try:
-        subprocess.run(
-            ["soffice", "--headless", "--convert-to", "docx", "--outdir", str(p.parent), str(p)],
-            check=True, capture_output=True,
-        )
+        with _SOFFICE:
+            subprocess.run(
+                ["soffice", "--headless", "--convert-to", "docx", "--outdir", str(p.parent), str(p)],
+                check=True, capture_output=True,
+            )
     except (OSError, subprocess.CalledProcessError) as e:
         raise ProcessError(f"无法把 .doc 转成 .docx：{e}") from e
     if not docx.exists():
@@ -154,31 +164,60 @@ def parse_file_content(path: Path, title: Optional[str]) -> Tuple[str, str, List
     return title, desc, content
 
 
-def process_item(provider: Provider, item: LawListItem, path_modifier: PathModifier) -> Path:
+async def process_item(provider: Provider, item: LawListItem, path_modifier: PathModifier) -> Path:
     """下载并解析一部法规，写到 out/。失败时抛 ProcessError。"""
     try:
-        path = provider.fetch_document(item).path_to_file
+        path = (await provider.fetch_document(item)).path_to_file
     except Exception as e:
-        raise ProcessError(f"下载失败：{e}") from e
+        # 超时之类的异常 str() 是空的
+        raise ProcessError(f"下载失败：{str(e) or repr(e)}") from e
     title = provider.heading(item)
-    _, desc, content = parse_file_content(path, title)
-    filedata = ContentParser().parse(title, desc or provider.note(item), content)
+    # 解析 Word 和转换 .doc 会占住事件循环，放到线程里
+    _, desc, content = await asyncio.to_thread(parse_file_content, path, title)
+    filedata = ContentParser().parse(title, await provider.header_note(item, desc), content)
     if not filedata:
         raise ProcessError(f"没有解析出正文：{path.name}")
     filedata = with_effective_date(filedata, item.in_effect_date, item.publication_date)
     return provider.cache_manager.write_law(path_modifier(Path(item.type) / law_filename(item)), filedata)
 
 
-def run(provider: Provider, items: Iterable[LawListItem], path_modifier: PathModifier,
-        failures: List[Tuple[str, str]], total: Optional[int] = None):
+Items = Union[Iterable[LawListItem], AsyncIterable[LawListItem]]
+
+
+async def aiter_items(items: Items):
+    if hasattr(items, "__aiter__"):
+        async for item in items:
+            yield item
+    else:
+        for item in items:
+            yield item
+
+
+async def run(provider: Provider, items: Items, path_modifier: PathModifier,
+              failures: List[Tuple[str, str]], total: Optional[int] = None, exit_on_failure: bool = True) -> int:
+    """返回写入了几部。exit_on_failure 时有失败就以退出码 1 结束；连续下载多批时传 False，最后再判断。"""
     written = []
-    bar = tqdm.tqdm(items, total=total, unit="laws")
-    for item in bar:
-        bar.set_description(f"Processing: {item.short_title[:20]}")
+    bar = tqdm.tqdm(total=total, unit="laws")
+    slots = asyncio.Semaphore(JOBS)
+
+    async def one(item: LawListItem):
         try:
-            written.append(process_item(provider, item, path_modifier))
+            written.append(await process_item(provider, item, path_modifier))
         except ProcessError as e:
             failures.append((item.title, str(e)))
+        except Exception as e:
+            # 一部出错不影响其余的，记下来最后一起列出
+            failures.append((item.title, f"{type(e).__name__}：{e}"))
+        finally:
+            slots.release()
+            bar.set_description(f"Processing: {item.short_title[:20]}")
+            bar.update()
+
+    # items 可能是边翻页边产出的，等有空位再取下一部，不必等所有列表页取完才开始下载
+    async with asyncio.TaskGroup() as group:
+        async for item in aiter_items(items):
+            await slots.acquire()
+            group.create_task(one(item))
     bar.close()
 
     click.echo(f"写入 {len(written)} 部，失败 {len(failures)} 部")
@@ -186,29 +225,45 @@ def run(provider: Provider, items: Iterable[LawListItem], path_modifier: PathMod
         click.echo(f"  {title}：{reason}", err=True)
     if written:
         click.echo("运行 `scrape.py organize` 查看并移入仓库")
-    if failures:
+    if failures and exit_on_failure:
         sys.exit(1)
+    return len(written)
 
 
 @click.group()
-def cli():
-    pass
+@click.option("--jobs", "-j", type=click.IntRange(1, 16), default=JOBS, show_default=True,
+              help="同时下载几部；被限流时调小")
+def cli(jobs: int):
+    global JOBS
+    JOBS = jobs
+
+
+def async_command(f):
+    """click 命令写成 async 函数，在事件循环里运行，并打开共用的 HTTP 连接。"""
+    @functools.wraps(f)
+    def wrapper(*args, **kwargs):
+        async def main():
+            async with net.client(limit=JOBS):
+                return await f(*args, **kwargs)
+        return asyncio.run(main())
+    return wrapper
 
 
 @cli.command()
 @click.argument("law_name")
-def download(law_name):
+@async_command
+async def download(law_name):
     """按名称搜索并下载。"""
     click.echo(f"Searching {law_name}", err=True)
     p = NationalLawDatabaseProvider()
-    ret = p.fetch(use_high_search=True, dataList=[("title", law_name)])
+    ret = await p.fetch(use_high_search=True, dataList=[("title", law_name)])
     items = []
     for item in ret.items:
         if is_manual_law(item.title):
             click.echo(f"跳过 {item.title}：刑法、民法典在仓库里手动维护", err=True)
         else:
             items.append(item)
-    run(p, items, lambda x: x, failures=[])
+    await run(p, items, lambda x: x, failures=[])
 
 
 @cli.command()
@@ -245,57 +300,105 @@ def _title_key(title: str) -> str:
 
 @cli.command()
 @click.argument("names_file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--provider", type=click.Choice(["flk", "wikisource"]), default="flk", show_default=True,
+              help="flk：国家法律法规数据库；wikisource：维基文库，同名的各个版本都下载")
 @click.option("--delay", type=float, default=1.0, show_default=True, help="每次搜索之间等几秒，避免被限流")
-def download_list(names_file: Path, delay: float):
+@async_command
+async def download_list(names_file: Path, provider: str, delay: float):
     """按名单逐个搜索下载，每行一个名称。只下载标题完全一致、尚未收录的。"""
     names = [line.strip() for line in names_file.read_text(encoding="utf-8").splitlines() if line.strip()]
-    p = NationalLawDatabaseProvider()
+    p = NationalLawDatabaseProvider() if provider == "flk" else WikisourceProvider()
     known = known_laws(p.cache_manager.out_path)
     items: List[LawListItem] = []
     not_found: List[str] = []
     for name in tqdm.tqdm(names, unit="名称", desc="搜索"):
-        matched: List[LawListItem] = []
         try:
-            ret = p.fetch(use_high_search=True, dataList=[("title", name)])
-            matched = [i for i in ret.items if _title_key(i.title) == _title_key(name)]
-            if not matched:
-                # 高级搜索只有现行有效的，已废止、已修改的用标题检索再找一次
-                time.sleep(delay)
-                ret = p.fetch(searchContent=name, searchType=1, sxx=p.ALL_VALIDITY, flfgCodeId=[], page_size=50)
-                matched = [i for i in ret.items if _title_key(i.title) == _title_key(name)]
-        except (requests.RequestException, ValueError) as e:
+            matched = await (_search_flk(p, name, delay) if provider == "flk" else p.versions(name))
+        except (*net.NetworkError, ValueError, KeyError) as e:
             not_found.append(f"{name}（搜索失败：{e}）")
             continue
         finally:
-            time.sleep(delay)
+            await asyncio.sleep(delay)
         if not matched:
             not_found.append(name)
         items += [i for i in matched if not should_ignore(i.title) and not is_known(i, known)]
     # 同一部法规的多个版本都下载；不同名称可能搜到同一条
     items = list({i.id: i for i in items}.values())
-    click.echo(f"\n{len(names)} 个名称，找到 {len(items)} 部待下载，{len(not_found)} 个在法规库里没有同名的")
+    click.echo(f"\n{len(names)} 个名称，找到 {len(items)} 部待下载，{len(not_found)} 个没有找到同名的")
     if not_found:
         click.echo("没有找到：" + "、".join(not_found[:30]) + (" ……" if len(not_found) > 30 else ""))
     if items:
-        run(p, items, lambda x: x, failures=[])
+        await run(p, items, lambda x: x, failures=[])
 
 
-def _download_all(p: Provider, limit: int, path_modifier: PathModifier = lambda x: x, **kwargs):
+async def _search_flk(p: NationalLawDatabaseProvider, name: str, delay: float) -> List[LawListItem]:
+    ret = await p.fetch(use_high_search=True, dataList=[("title", name)])
+    matched = [i for i in ret.items if _title_key(i.title) == _title_key(name)]
+    if not matched:
+        # 高级搜索只有现行有效的，已废止、已修改的用标题检索再找一次
+        await asyncio.sleep(delay)
+        ret = await p.fetch(searchContent=name, searchType=1, sxx=p.ALL_VALIDITY, flfgCodeId=[], page_size=50)
+        matched = [i for i in ret.items if _title_key(i.title) == _title_key(name)]
+    return matched
+
+
+@cli.command()
+@click.argument("name")
+@async_command
+async def download_versions(name: str):
+    """从维基文库下载一部法规的全部版本，如「中华人民共和国律师法」。
+
+    只跳过同名同日期的文件已经存在的版本。download-all 那样按头部日期去重会把历史版本当成已收录：
+    2017 年版的头部写着 2001、2007、2012 年的修正，但那几个版本并不在仓库里。
+    """
+    w = WikisourceProvider()
+    existing = {f.name for f in itertools.chain(repo_files(include_dlc=True), w.cache_manager.out_path.rglob("*.md"))}
+    items = await w.versions(name)
+    for item in items:
+        click.echo(f"  {item.id}：{item.publication_date} → {item.type}"
+                   + ("（已有）" if law_filename(item) in existing else ""))
+    items = [i for i in items if law_filename(i) not in existing]
+    if not items:
+        click.echo("没有要下载的版本")
+        return
+    await run(w, items, lambda x: x, failures=[])
+
+
+@cli.command()
+@click.argument("url")
+@async_command
+async def download_url(url: str):
+    """下载一个页面，目前支持维基文库，如
+    https://zh.wikisource.org/wiki/中华人民共和国企业所得税法_(2017年)。按制定机关决定写到 out/ 下哪个目录。"""
+    w = WikisourceProvider()
+    page = w.page_from_url(url)
+    if not page:
+        raise click.BadParameter("目前只支持维基文库的页面链接", param_hint="url")
+    item = await w.version(page)
+    if not item:
+        raise click.ClickException(f"{page}：页面里没有日期或制定机关，无法确定文件名和目录")
+    click.echo(f"  {page}：{item.publication_date} → {item.type}")
+    await run(w, [item], lambda x: x, failures=[])
+
+
+async def _download_all(p: Provider, limit: int, path_modifier: PathModifier = lambda x: x,
+                        exit_on_failure: bool = True, **kwargs) -> Tuple[int, int]:
+    """返回 (写入, 失败) 部数。"""
     click.echo(f"Downloading {limit if limit > 0 else 'all'} with params: {kwargs}")
     known = known_laws(p.cache_manager.out_path)
     failures: List[Tuple[str, str]] = []
 
-    def pending():
+    async def pending():
+        count = 0
         for page in itertools.count(1):
             try:
-                ret = p.fetch(page_num=page, **kwargs)
-            except requests.HTTPError as e:
-                if e.response is not None and e.response.status_code == 404:
-                    return
-                failures.append((f"列表第 {page} 页", str(e)))
+                ret = await p.fetch(page_num=page, **kwargs)
+            except net.HTTPError as e:
+                if e.status != 404:
+                    failures.append((f"列表第 {page} 页", str(e)))
                 return
-            except requests.RequestException as e:
-                failures.append((f"列表第 {page} 页", str(e)))
+            except net.NetworkError as e:
+                failures.append((f"列表第 {page} 页", str(e) or repr(e)))
                 return
             if not ret.items:
                 return
@@ -305,11 +408,13 @@ def _download_all(p: Provider, limit: int, path_modifier: PathModifier = lambda 
                 if is_known(item, known):
                     continue
                 yield item
+                count += 1
+                if count == limit:
+                    return
 
-    items = pending()
-    if limit > 0:
-        items = itertools.islice(items, limit)
-    run(p, items, path_modifier, failures, total=limit if limit > 0 else None)
+    written = await run(p, pending(), path_modifier, failures, total=limit if limit > 0 else None,
+                        exit_on_failure=exit_on_failure)
+    return written, len(failures)
 
 
 limit_option = click.option("--limit", type=int, default=0, help="最多下载几部，0 为不限")
@@ -317,7 +422,8 @@ limit_option = click.option("--limit", type=int, default=0, help="最多下载�
 
 @cli.command()
 @limit_option
-def download_all(limit: int):
+@async_command
+async def download_all(limit: int):
     """下载全部尚未收录的法律、行政法规和司法解释。"""
     kwargs = {
         "flfgCodeId": [
@@ -327,29 +433,35 @@ def download_all(limit: int):
         ],
         "orderByParam": {"order": "gbrq", "sort": "DESC"},
     }
-    _download_all(NationalLawDatabaseProvider(), limit, **kwargs)
+    await _download_all(NationalLawDatabaseProvider(), limit, **kwargs)
 
 
 @cli.command()
-@click.argument("region")
+@click.argument("regions", nargs=-1, required=True)
 @limit_option
-def download_dlc(region: str, limit: int):
-    """下载地方性法规或文化与旅游部规章。"""
-    if region in REGION_CODE_MAP:
-        _download_all(
+@async_command
+async def download_dlc(regions: Tuple[str, ...], limit: int):
+    """下载地方性法规。地区可以写名称、编号或编号范围，如「北京」「7-31」「3,5,8-10」，
+    编号从 1（北京）到 31（新疆）。多个地区逐个下载，--limit 是每个地区的上限。"""
+    try:
+        names = parse_regions(" ".join(regions))
+    except ValueError as e:
+        raise click.BadParameter(str(e), param_hint="regions") from e
+    summary = []
+    for i, region in enumerate(names, 1):
+        if len(names) > 1:
+            click.echo(f"\n== [{i}/{len(names)}] {region}")
+        summary.append((region, *await _download_all(
             NationalLawDatabaseProvider(), limit,
-            path_modifier=lambda path: Path(f"{region}地方法规") / "地方性法规" / region / path.name,
+            path_modifier=lambda path, region=region: Path(f"{region}地方法规") / "地方性法规" / region / path.name,
+            exit_on_failure=False,
             flfgCodeId=[230],  # 地方性法规
             zdjgCodeId=[REGION_CODE_MAP[region]],
-        )
-        return
-    if region == "文化与旅游部":
-        _download_all(
-            CultureAndTourismDatabaseProvider(), limit,
-            path_modifier=lambda path: Path(region) / "部门规章" / region / path.name,
-        )
-        return
-    raise click.BadParameter(f"不支持的地区：{region}", param_hint="region")
+        )))
+    if len(names) > 1:
+        click.echo("\n汇总：" + "，".join(f"{r} 写入 {w}" + (f" 失败 {f}" if f else "") for r, w, f in summary))
+    if any(f for _, _, f in summary):
+        sys.exit(1)
 
 
 @cli.command()
@@ -357,17 +469,19 @@ def download_dlc(region: str, limit: int):
 @click.option("--see-also", is_flag=True, help="「另见」里的索引页也展开一层")
 @click.option("--type", "type_", default="行政法规", show_default=True, help="写到 out/ 下哪个目录")
 @limit_option
-def download_wikisource(index: str, see_also: bool, type_: str, limit: int):
+@async_command
+async def download_wikisource(index: str, see_also: bool, type_: str, limit: int):
     """下载维基文库索引页（消歧义页）列出的页面，如「国务院关于修改和废止部分行政法规的决定」。"""
-    _download_all(WikisourceProvider(), limit, index=index, see_also=see_also, type_=type_)
+    await _download_all(WikisourceProvider(), limit, index=index, see_also=see_also, type_=type_)
 
 
 @cli.command()
 @click.argument("department", required=False, default="")
 @limit_option
-def download_gz(department: str, limit: int):
+@async_command
+async def download_gz(department: str, limit: int):
     """从国家规章库下载部门规章，如「教育部」；不传部门时下载全部部门。"""
-    _download_all(GovRegulationDatabaseProvider(), limit, department=department or None)
+    await _download_all(GovRegulationDatabaseProvider(), limit, department=department or None)
 
 
 def suspected_duplicate(f: Path, versions: Dict[str, List[Path]]) -> Optional[Path]:
@@ -389,7 +503,7 @@ def organize_target(rel: Path, folders: Dict[str, Set[Path]]) -> Tuple[Optional[
     """out/ 里的文件应该放到仓库哪里。返回 (目标路径, 无法确定时的原因)。"""
     top = rel.parts[0]
     name = canonical_filename(rel.name)
-    if top.endswith("地方法规") or top == "文化与旅游部":
+    if top.endswith("地方法规"):
         return ROOT / "DLC" / rel.parent / name, ""
     if top == "部门规章":
         return ROOT / rel.parent / name, ""
