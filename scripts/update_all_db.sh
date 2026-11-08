@@ -3,13 +3,16 @@ set -e
 
 DLC_PATTERN="../DLC*/*"
 MAIN_DB="../db.sqlite3"
+# database.py 要用装了 peewee 的 Python，优先用仓库的虚拟环境，不用先激活
+PYTHON="../.venv/bin/python"
+if [ ! -x "$PYTHON" ]; then PYTHON="python"; fi
 
 update_db() {
     local db_path="$1"
     local message="$2"
     
     echo "$message"
-    python database.py update "$db_path"
+    "$PYTHON" database.py update "$db_path"
 }
 
 # 先更新本体：DLC 的实施关系指向本体数据库里的法规 ID
