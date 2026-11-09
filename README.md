@@ -10,29 +10,36 @@ draft: true
 
 ## 贡献指南
 
-下面的操作都可以在仓库根目录运行 `make`（即 `make shell`），按菜单选择，不用记命令。另有 `make lint`、`make lint-fix`、`make test`；第一次使用或 `requirements.txt` 变化后运行 `make setup`。
+工具都在 `scripts/` 下，是一个 Python 包，命令行入口是 `laws`。在仓库根目录：
+
+ - `make`（即 `make shell`）：交互菜单，↑↓ 选择、回车确认、Esc 返回上一级，不用记命令；每一项下面显示对应的 `laws` 命令
+ - `make lint`、`make lint-fix`：检查格式、自动修复
+ - `make db`：更新数据库（先本体，再全部 DLC）
+ - `make test`、`make check`：运行测试、检查代码风格
+ - `make setup`：安装依赖，第一次使用或 `scripts/pyproject.toml` 变化后运行
+
+装好后可以直接用 `.venv/bin/laws <命令>`（或激活虚拟环境后用 `laws`），`laws --help` 列出全部命令。
 
 ### 手动贡献
 
  - 根据[法律法规模版](法律法规模版.md) 的格式，将法律法规放入 `法律法规` 文件夹下合适的位置
- - 在仓库根目录运行 `.venv/bin/python scripts/lint.py`，检查格式（有 error 时退出码为 1）；`--diff` 列出能自动修复的改动，`--fix` 自动修复后再检查
- - 在 `scripts` 目录下运行 `./update_all_db.sh`（会自动更新 `sqlite` 内容）
+ - 运行 `laws lint` 检查格式（有 error 时退出码为 1）；`--diff` 列出能自动修复的改动，`--fix` 自动修复后再检查
+ - 运行 `laws db update`（会自动更新 `sqlite` 内容）
  - 提交更改，并提 pr
 
-### 自动脚本
+### 自动抓取
 
-`scripts/scrape.py` 支持从 [国家法律法规数据库](https://flk.npc.gov.cn) 抓取最新的法律法规。
+支持从 [国家法律法规数据库](https://flk.npc.gov.cn)、[国家规章库](https://www.gov.cn/zhengce/xxgk/gjgzk/) 和 [维基文库](https://zh.wikisource.org) 抓取。
 
-在仓库根目录，执行以下指令
-
- - `.venv/bin/python scripts/scrape.py download-all`（下载尚未收录的法律、行政法规和司法解释，`--limit N` 限制数量）
- - `.venv/bin/python scripts/scrape.py download <名称>`（按名称下载）
- - `.venv/bin/python scripts/scrape.py download-dlc <地区>`（下载地方性法规）
- - `.venv/bin/python scripts/scrape.py organize`（列出整理计划；确认后加 `--apply` 移入仓库。仓库里已有的文件不会被覆盖，有变化的会生成 diff）
- - 在 `scripts` 目录下运行 `./update_all_db.sh`
+ - `laws download-all`（下载尚未收录的法律、行政法规和司法解释，`--limit N` 限制数量）
+ - `laws download <名称>`（按名称下载）
+ - `laws download-dlc <地区>`（下载地方性法规）
+ - `laws download-gz [部门]`（从国家规章库下载部门规章）
+ - `laws organize`（列出整理计划；确认后加 `--apply` 移入仓库。仓库里已有的文件不会被覆盖，有变化的会生成 diff）
+ - `laws db update`
  - 提交更改，并提 pr
 
-修改解析逻辑后，在仓库根目录运行 `.venv/bin/python -m unittest discover scripts/tests`。
+修改解析、入库逻辑后运行 `make test`；想确认对现有数据的影响，改之前和改之后各运行一次 `laws snapshot <目录>`，再 `diff -r` 两个目录。
 
 ---
 

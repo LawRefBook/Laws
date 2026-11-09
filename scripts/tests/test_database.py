@@ -1,16 +1,21 @@
-"""在仓库根目录运行：.venv/bin/python -m unittest discover scripts/tests"""
+"""`make test` 运行全部测试。"""
 import io
-import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from database import (Category, Database, Law, LawFlag, Relationship, content_flags, effective_date,  # noqa: E402
-                      decision_listed_date, extract_abolished_law_names, extract_decision_abolished_names, extract_decision_amended_names,
-                      extract_valid_from)  # noqa: E402
+from lawref.db import Category, Database, Law, LawFlag, Relationship, update
+from lawref.db.analysis import (
+    content_flags,
+    decision_listed_date,
+    effective_date,
+    extract_abolished_law_names,
+    extract_decision_abolished_names,
+    extract_decision_amended_names,
+    extract_valid_from,
+)
 
 
 def law_text(title, body, header=("2020年1月1日 通过",)):
@@ -184,7 +189,7 @@ class UpdateTest(unittest.TestCase):
 
     def update(self):
         with redirect_stdout(io.StringIO()) as out:
-            count = Database(self.root / "db.sqlite3").update_database()
+            count = update(Database(self.root / "db.sqlite3"))
         return count, out.getvalue()
 
     def law(self, name, publish=None):
@@ -301,7 +306,7 @@ class UpdateTest(unittest.TestCase):
         self.write(dlc / "地方性法规/北京/北京市统计条例(2020-01-01).md",
                    law_text("北京市统计条例", ["第一条 根据《中华人民共和国统计法》，结合本市实际，制定本条例。"]))
         with redirect_stdout(io.StringIO()):
-            count = Database(dlc / "db.sqlite3").update_database()
+            count = update(Database(dlc / "db.sqlite3"))
         self.assertEqual(count["created"], 2)
         local = {law.id: law.name for law in Law.select()}
         self.assertEqual(
@@ -331,7 +336,7 @@ class UpdateTest(unittest.TestCase):
         # 2008 年那份其实是另一部规定，改名后两部不再是同名版本
         (self.root / "行政法规/甲规定(2008-02-14).md").rename(self.root / "行政法规/甲规定二(2008-02-14).md")
         Law.delete().where(Law.name == "甲规定", Law.publish == "2008-02-14").execute()
-        count, out = self.update()
+        count, _ = self.update()
         self.assertEqual(count["restored"], 1)
         self.assertEqual(self.law("甲规定").valid_to, "2099-12-31")
         self.assertEqual(self.law("乙条例").valid_to, "1970-01-01")
@@ -416,9 +421,9 @@ class UpdateTest(unittest.TestCase):
     def test_rollback_on_error(self):
         self.write("行政法规/戊条例(2020-01-01).md", law_text("戊条例", ["第一条 内容"]))
         db = Database(self.root / "db.sqlite3")
-        db.update_versions = lambda: 1 / 0
-        with redirect_stdout(io.StringIO()), self.assertRaises(ZeroDivisionError):
-            db.update_database()
+        with mock.patch("lawref.db.sync.update_versions", side_effect=ZeroDivisionError), \
+                redirect_stdout(io.StringIO()), self.assertRaises(ZeroDivisionError):
+            update(db)
         self.assertEqual(Law.select().count(), 0)
 
 

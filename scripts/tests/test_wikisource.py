@@ -1,11 +1,7 @@
-"""在仓库根目录运行：.venv/bin/python -m unittest discover scripts/tests"""
-import sys
+"""`make test` 运行全部测试。"""
 import unittest
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from providers.wikisource import WikisourceProvider, base_title, folder_for_lawmaker, lawmaker_from_notes  # noqa: E402
+from lawref.fetch.sources.wikisource import WikisourceProvider, base_title, folder_for_lawmaker, lawmaker_from_notes
 
 
 class WikisourceTest(unittest.TestCase):

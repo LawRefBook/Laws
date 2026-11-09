@@ -1,43 +1,38 @@
-"""在仓库根目录运行：.venv/bin/python -m unittest discover scripts/tests"""
-import sys
+"""`make test` 运行全部测试。"""
 import tempfile
 import unittest
 from pathlib import Path
 
-SCRIPTS = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(SCRIPTS))
+from docx import Document
 
-from docx import Document  # noqa: E402
-
-from scrape import (canonical_filename, law_filename, lint, organize_target,  # noqa: E402
-                    should_ignore, with_effective_date)
-from model.law import LawListItem  # noqa: E402
-from parsers.content import (ContentParser, drop_announcement, drop_toc,  # noqa: E402
-                             normalize_heading, parse_desc)
-from common import is_traditional  # noqa: E402
-from parsers.epub import EpubParser  # noqa: E402
-from parsers.html import HtmlParser  # noqa: E402
-from providers.gov_regulation_database import dated_note, dates_from_note  # noqa: E402
-from parsers.word import WordParser  # noqa: E402
-from providers.cache_provider import CacheManager  # noqa: E402
+from lawref import lint
+from lawref.document import canonical_filename
+from lawref.fetch.models import LawItem
+from lawref.fetch.pipeline import is_known, item_filename, should_ignore, with_effective_date
+from lawref.fetch.sources.gov import dated_note, dates_from_note
+from lawref.organize import organize_target, suspected_duplicate
+from lawref.parse import parse_epub, parse_html, parse_word
+from lawref.parse.content import build, drop_announcement, drop_toc, normalize_heading, parse_note, render
+from lawref.paths import ROOT
+from lawref.text import is_traditional
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
 def parse(title, desc, content):
-    return ContentParser().parse(title, desc, content)
+    return build(title, desc, content)
 
 
 class DescTest(unittest.TestCase):
 
     def test_trailing_paren(self):
         self.assertEqual(
-            parse_desc("（2026年5月15日中华人民共和国国务院令第838号第二次修订）"),
+            parse_note("（2026年5月15日中华人民共和国国务院令第838号第二次修订）"),
             ["2026年5月15日 中华人民共和国国务院令第838号第二次修订"])
 
     def test_split_by_date(self):
         self.assertEqual(
-            parse_desc("（2017年10月27日秦皇岛市第十四届人民代表大会常务委员会第五次会议通过并经"
+            parse_note("（2017年10月27日秦皇岛市第十四届人民代表大会常务委员会第五次会议通过并经"
                        "2018年3月29日河北省第十三届人民代表大会常务委员会第二次会议批准　根据"
                        "2024年7月25日《决定》修正。）"),
             ["2017年10月27日 秦皇岛市第十四届人民代表大会常务委员会第五次会议通过",
@@ -45,13 +40,13 @@ class DescTest(unittest.TestCase):
              "2024年7月25日 《决定》修正"])
 
     def test_keep_paired_paren(self):
-        self.assertEqual(parse_desc("（2020年1月1日公布《办法（试行）》）"), ["2020年1月1日 公布《办法（试行）》"])
+        self.assertEqual(parse_note("（2020年1月1日公布《办法（试行）》）"), ["2020年1月1日 公布《办法（试行）》"])
 
     def test_spaced_date(self):
-        self.assertEqual(parse_desc("（2014 年 5 月 29 日四川省人大常委会通过）"), ["2014年5月29日 四川省人大常委会通过"])
+        self.assertEqual(parse_note("（2014 年 5 月 29 日四川省人大常委会通过）"), ["2014年5月29日 四川省人大常委会通过"])
 
     def test_effective_date(self):
-        self.assertEqual(parse_desc("（2020年1月1日公布 自2020年3月1日起施行）"),
+        self.assertEqual(parse_note("（2020年1月1日公布 自2020年3月1日起施行）"),
                          ["2020年1月1日 公布", "2020年3月1日 施行"])
 
 
@@ -137,7 +132,6 @@ class HeadingTest(unittest.TestCase):
 class WordParserTest(unittest.TestCase):
 
     def test_hyperlink_text_kept(self):
-        from docx.oxml.ns import qn
         from docx.oxml import OxmlElement
         document = Document()
         p = document.add_paragraph("（二）具有")
@@ -149,14 +143,14 @@ class WordParserTest(unittest.TestCase):
         link.append(run)
         p._p.append(link)
         p.add_run("第十六条规定的情形之一的。")
-        _, _, content = WordParser().parse_document(document, "某规则")
+        _, _, content = parse_word(document, "某规则")
         self.assertEqual(content, ["（二）具有刑事诉讼法第十六条规定的情形之一的。"])
 
     def parse_paragraphs(self, title, paragraphs):
         document = Document()
         for text in paragraphs:
             document.add_paragraph(text)
-        return WordParser().parse_document(document, title)
+        return parse_word(document, title)
 
     def test_blank_paragraphs_and_invisible_chars(self):
         _, desc, content = self.parse_paragraphs("某条例", ["", "某条例", "​", "（2020年1月1日通过）", "", "第一条　内容"])
@@ -191,7 +185,7 @@ class WordParserTest(unittest.TestCase):
                 num_pr = p._p.get_or_add_pPr().get_or_add_numPr()
                 num_pr.get_or_add_numId().val = num_id
                 num_pr.get_or_add_ilvl().val = ilvl
-        _, _, content = WordParser().parse_document(document, "某条例")
+        _, _, content = parse_word(document, "某条例")
         self.assertEqual(content, ["第一章 总则", "（一）内容", "（二）内容", "第二章 附则", "（一）内容", "第十二条 内容", "没有编号"])
 
     def test_title_and_desc_in_one_paragraph(self):
@@ -210,8 +204,9 @@ class FixtureTest(unittest.TestCase):
             with self.subTest(doc.stem), tempfile.TemporaryDirectory() as tmp:
                 want = doc.with_suffix(".md").read_text(encoding="utf-8")
                 title = want.splitlines()[0][2:]
-                _, desc, content = WordParser().parse_document(Document(str(doc)), title)
-                got = CacheManager(Path(tmp)).write_law(Path("out.md"), parse(title, desc, content))
+                _, desc, content = parse_word(Document(str(doc)), title)
+                got = Path(tmp) / "out.md"
+                got.write_text(render(parse(title, desc, content)), encoding="utf-8")
                 self.assertEqual(got.read_text(encoding="utf-8").strip(), want.strip())
                 self.assertEqual([p for p in lint.lint_file(got) if p.error], [])
 
@@ -235,15 +230,13 @@ class MainTest(unittest.TestCase):
                          "国际邮轮在中华人民共和国港口靠港补给的规定(2024-04-22).md")
 
     def test_known_by_header_dates(self):
-        from scrape import is_known
         known = {"人民检察院刑事诉讼规则": {"2019-12-02", "2019-12-30"}}
-        item = LawListItem(id="", title="人民检察院刑事诉讼规则", released_by="", type="", publication_date="2019-12-30", in_effect_date="2019-12-30")
+        item = LawItem(id="", title="人民检察院刑事诉讼规则", released_by="", folder="", publication_date="2019-12-30", in_effect_date="2019-12-30")
         self.assertTrue(is_known(item, known))
         item.publication_date = item.in_effect_date = "2026-01-01"
         self.assertFalse(is_known(item, known))
 
     def test_suspected_duplicate(self):
-        from scrape import suspected_duplicate
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             old = tmp / "长城保护条例(2006-10-01).md"
@@ -262,7 +255,7 @@ class MainTest(unittest.TestCase):
         self.assertEqual(with_effective_date(lines, "2014-03-15", "2013-10-25"),
                          ["# 某法", "2013年10月25日 修正", "2014年3月15日 施行", "<!-- INFO END -->", "第一条 内容"])
         self.assertEqual(with_effective_date(lines, "2013-10-25", "2013-10-25"), lines)
-        with_line = lines[:2] + ["2014年3月15日 施行"] + lines[2:]
+        with_line = [*lines[:2], "2014年3月15日 施行", *lines[2:]]
         self.assertEqual(with_effective_date(with_line, "2014-03-15", "2013-10-25"), with_line)
 
     def test_document_number_in_header(self):
@@ -271,12 +264,12 @@ class MainTest(unittest.TestCase):
                                "<!-- INFO END -->", "第一条 内容"])
 
     def test_law_filename(self):
-        item = LawListItem(id="", title="中华人民共和国外国人在中华人民共和国收养子女登记办法 ", released_by="", type="", publication_date="1999-05-25")
-        self.assertEqual(law_filename(item), "外国人在中华人民共和国收养子女登记办法(1999-05-25).md")
+        item = LawItem(id="", title="中华人民共和国外国人在中华人民共和国收养子女登记办法 ", released_by="", folder="", publication_date="1999-05-25")
+        self.assertEqual(item_filename(item), "外国人在中华人民共和国收养子女登记办法(1999-05-25).md")
 
     def test_organize_target(self):
         folders = {"监狱法": {Path("行政法")}, "某法": {Path("经济法"), Path("社会法")}}
-        root = SCRIPTS.parent
+        root = ROOT
         self.assertEqual(organize_target(Path("法律/监狱法(2026-04-30).md"), folders)[0], root / "行政法/监狱法(2026-04-30).md")
         self.assertEqual(organize_target(Path("行政法规/新条例(2026-01-01).md"), folders)[0], root / "行政法规/新条例(2026-01-01).md")
         self.assertEqual(organize_target(Path("北京地方法规/地方性法规/北京/某条例(2026-01-01).md"), folders)[0],
@@ -332,7 +325,7 @@ class EpubTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "某法.epub"
             write_epub(path, body)
-            title, desc, content = EpubParser().parse_document(path)
+            title, desc, content = parse_epub(path)
         self.assertEqual(title, "某法")
         self.assertEqual(parse(title, desc, content), [
             "# 某法",
@@ -354,7 +347,7 @@ class EpubTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "憲法.epub"
             write_epub(path, body, title="中華人民共和國憲法 (1954年)")
-            title, desc, content = EpubParser().parse_document(path)
+            title, _, content = parse_epub(path)
         self.assertEqual(title, "中华人民共和国宪法")
         self.assertEqual(content, ["第一章 总纲", "第一条 中华人民共和国是工人阶级领导的、以工农联盟为基础的人民民主国家。",
                                    "第二条 中华人民共和国的一切权力属于人民。"])
@@ -368,7 +361,7 @@ class EpubTest(unittest.TestCase):
 class AmendmentTest(unittest.TestCase):
 
     def test_amendment_lines_not_articles(self):
-        from parsers.content import normalize_article
+        from lawref.parse.content import normalize_article
         self.assertEqual(normalize_article("第二十二条改为第二十一条，修改为：“内容”"), "第二十二条改为第二十一条，修改为：“内容”")
         self.assertEqual(normalize_article("第六十二条第一项修改为：“内容”"), "第六十二条第一项修改为：“内容”")
         self.assertEqual(normalize_article("第六十九条中的“甲”修改为“乙”。"), "第六十九条中的“甲”修改为“乙”。")
@@ -396,7 +389,7 @@ class GovRegulationTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "content_1.htm"
             path.write_text(html, encoding="utf-8")
-            title, desc, content = HtmlParser().parse_document(path)
+            title, desc, content = parse_html(path)
         self.assertEqual(title, "某办法")
         self.assertEqual(parse(title, desc, content), [
             "# 某办法",
@@ -426,14 +419,14 @@ class GovRegulationTest(unittest.TestCase):
         ]
         for note, publish, want in cases:
             with self.subTest(note):
-                self.assertEqual(parse_desc(dated_note(note, publish)), want)
+                self.assertEqual(parse_note(dated_note(note, publish)), want)
         self.assertEqual(dated_note(None, "2020-01-01"), "")
 
     def html(self, body):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "content_1.htm"
             path.write_text(f'<html><body><div id="UCAP-CONTENT">{body}</div></body></html>', encoding="utf-8")
-            return HtmlParser().parse_document(path, "某办法")
+            return parse_html(path, "某办法")
 
     def test_html_undated_note_and_title_in_one_paragraph(self):
         _, desc, content = self.html("<p>某办法</p><p>( 国家旅游局令第22号公布 自2005年7月3日起施行)</p><p>第一条 内容</p>")

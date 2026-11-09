@@ -1,0 +1,55 @@
+name: test
+
+# 只有工具代码变化时才跑；只改法规文件的提交不用
+on:
+  push:
+    branches: [master]
+    paths:
+      - "scripts/**"
+      - "Makefile"
+      - ".github/workflows/test.yml"
+  pull_request:
+    paths:
+      - "scripts/**"
+      - "Makefile"
+      - ".github/workflows/test.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 同一个分支有新的提交时，取消还在跑的旧任务
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # pyproject.toml 要求的最低版本，和依赖都有 Linux wheel 的最新版本
+        # （lxml 6.0.2 还没有 3.15 的 wheel）
+        python-version: ["3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # 测试只用到 scripts/ 和根目录的 Makefile，不用拉几百 MB 的法规文件
+          sparse-checkout: scripts
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: scripts/pyproject.toml
+
+      - name: Install
+        run: make setup
+
+      - name: Test
+        run: make test
+
+      - name: Lint
+        run: make check

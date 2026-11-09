@@ -1,13 +1,9 @@
-"""在仓库根目录运行：.venv/bin/python -m unittest discover scripts/tests"""
-import sys
+"""`make test` 运行全部测试。"""
 import unittest
-from pathlib import Path
 
 from aiohttp import web
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from providers import net  # noqa: E402
+from lawref.fetch import net
 
 
 class GetJsonTest(unittest.IsolatedAsyncioTestCase):

@@ -1,0 +1,52 @@
+# 放在 scripts/ 而不是仓库根目录：根目录的文件会被打进本体数据包
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lawref"
+version = "1.0.0"
+description = "LawRefBook 法规数据的抓取、整理、检查、入库和发布工具"
+requires-python = ">=3.12"
+dependencies = [
+    "aiohttp==3.14.5",
+    "beautifulsoup4==4.12.2",
+    "click==8.3.1",
+    "lxml==6.0.2",
+    "opencc-python-reimplemented==0.1.7",
+    "peewee==3.16.2",
+    "prompt-toolkit==3.0.53",
+    "python-docx==0.8.11",
+    "questionary==2.1.1",
+    "tqdm==4.67.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==9.2.0", "ruff==0.17.4"]
+
+[project.scripts]
+laws = "lawref.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["lawref*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = ["__cache__", "migrations"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+ignore = [
+    "E501",    # 长的正则和中文说明不拆行
+    "RUF001",  # 全角标点是数据的一部分
+    "RUF002",
+    "RUF003",
+    "SIM108",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["lawref"]

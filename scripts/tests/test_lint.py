@@ -1,11 +1,8 @@
-"""在仓库根目录运行：.venv/bin/python -m unittest discover scripts/tests"""
-import sys
+"""`make test` 运行全部测试。"""
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from lint import fix_text, lint_text  # noqa: E402
+from lawref.lint import fix_text, lint_text
 
 
 def doc(*header, body="第一条 内容"):
