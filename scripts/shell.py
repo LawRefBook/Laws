@@ -5,6 +5,7 @@
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -247,6 +248,27 @@ def release_dlc():
     confirm_release("--dlc", channel)
 
 
+# Laws 仓库放在 App 仓库里时（LawRefBook/Laws），App 内置的本体包在上一层
+APP_ROOT = ROOT.parent
+RELEASE_FOLDER = ROOT / ".release"
+
+
+def pack_main():
+    """只打包本体到 .release，不发布。可以再复制到 App 仓库，替换 App 内置的本体包。"""
+    if run(["bash", "release.sh", "--main", "--pack-only"], SCRIPTS) != 0:
+        return
+    zip_file, meta_file = RELEASE_FOLDER / "laws.zip", RELEASE_FOLDER / "metadata" / "laws.meta"
+    meta = json.loads(meta_file.read_text())
+    print(f"\n{zip_file}（{meta['filesize'] / 1024:.1f} MB）\n{meta_file}：hash {meta['hash'][:7]}{'-dirty' if meta['hash'].endswith('-dirty') else ''}")
+    app_zip, app_meta = APP_ROOT / "laws.zip", APP_ROOT / "laws.meta"
+    if not app_zip.exists():
+        return
+    if confirm(f"复制到 App 仓库，替换 {app_zip} 和 {app_meta}？"):
+        shutil.copyfile(zip_file, app_zip)
+        shutil.copyfile(meta_file, app_meta)
+        print("已复制。重新编译运行 App 后会解压新的本体包")
+
+
 MENU: List[Tuple[str, List[Tuple[str, Callable[[], None]]]]] = [
     ("抓取", [
         ("下载尚未收录的法律、行政法规和司法解释", download_all),
@@ -267,6 +289,7 @@ MENU: List[Tuple[str, List[Tuple[str, Callable[[], None]]]]] = [
     ]),
     ("发布", [
         ("重新生成 App 迁移映射", generate_migration),
+        ("打包本体（不发布）", pack_main),
         ("发布本体", release_main),
         ("发布 DLC", release_dlc),
     ]),

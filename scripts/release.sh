@@ -8,14 +8,18 @@ RELEASE_BRANCH="release"
 # --dlc   只发布 DLC，本体保持线上版本不动
 # --channel alpha|prod  发布到哪个 channel，默认 alpha
 #         alpha 在 release 分支的 alpha/ 下，prod 在 release 分支根目录
-USAGE="Usage: $0 [-f] [--main | --dlc] [--channel alpha|prod]"
+# --pack-only  只打包到 ./.release，不比较线上版本、不提交、不 push。
+#         打包的是工作区文件，有未提交的改动时 meta 的 update 取当前时间，App 才会重新解压
+USAGE="Usage: $0 [-f] [--main | --dlc] [--channel alpha|prod] [--pack-only]"
 force=0
 pack_main=1
 pack_dlc=1
+pack_only=0
 channel=alpha
 while [ $# -gt 0 ]; do
     case "$1" in
         -f) force=1 ;;
+        --pack-only) pack_only=1; force=1 ;;
         --main) pack_dlc=0 ;;
         --dlc) pack_main=0 ;;
         --channel) shift; channel="$1" ;;
@@ -31,7 +35,8 @@ esac
 # channel 目录里由发布管理的文件，prod 的根目录还有 CNAME、alpha/ 等不能动
 CHANNEL_PATHS=(laws.zip DLC dlc.json metadata)
 CHANNEL_PREFIX="${CHANNEL_DIR:+$CHANNEL_DIR/}"
-echo "Channel: $channel"
+# 只打包时用不到 channel
+if [ "$pack_only" == 0 ]; then echo "Channel: $channel"; fi
 if [ "$pack_main" == 0 ] && [ "$pack_dlc" == 0 ]; then
     echo "--main 和 --dlc 不能同时使用"
     exit 1
@@ -91,9 +96,17 @@ function pack {
     if [ "$1" != "." ]; then output_zip="$out_path/$output_name.$_hash.zip"; fi
     echo "Packaging $1 to $output_zip"
 
-    find . -type f \( -name ".*" -prune \) -o \( -name "scripts" -o -name "Makefile" -o -name "scrape" -o -name "release" -o -name ".venv" -o -name ".git*" -o -name "DLC" \) -prune -o -exec zip -q "$output_zip" {} +
+    # 以点开头的文件和目录（.release、.git、.venv、.DS_Store …）都不打包。
+    # 之前只排除了这样的文件，.release/metadata 里的 meta 会被打进本体包
+    find . \( \( -name ".*" ! -name "." \) -o -name "scripts" -o -name "Makefile" -o -name "scrape" -o -name "release" -o -name "DLC" \) -prune -o -exec zip -q "$output_zip" {} +
 
     _at=$(git log -n 1 --pretty=format:"%at"  -- . ':!scripts' ':!scrape' ':!.*' ':!DLC' ':!Makefile' | awk -F" " '{printf "%s", $1}')
+    if [ "$pack_only" == 1 ] && [ -n "$(git status --porcelain -- . ':!scripts' ':!scrape' ':!.*' ':!DLC' ':!Makefile')" ]; then
+        # 包里有未提交的改动：hash 标出来，update 取当前时间，否则 App 以为没有变化，不会重新解压
+        echo "工作区有未提交的改动，已一起打包"
+        _hash="$_hash-dirty"
+        _at=$(date +%s)
+    fi
     size=$(du -k "$output_zip" | cut -f1)
 
     json=$(printf '{"name":"%s","hash":"%s", "update":%s, "filesize":%s}' $output_name $_hash $_at $size)
@@ -173,6 +186,15 @@ function finalize() {
     fi
     echo "Release finalized."
 }
+
+if [ "$pack_only" == 1 ]; then
+    rm -rf $RELEASE_FOLDER
+    mkdir -p $RELEASE_FOLDER
+    packall
+    cd "$current_path"
+    echo "已打包到 $current_path/${RELEASE_FOLDER#./}，没有发布"
+    exit 0
+fi
 
 # 把 release 分支上该 channel 的现有内容取到 ./.release，作为打包的基础
 rm -rf $RELEASE_FOLDER

@@ -8,8 +8,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from database import (Category, Database, Law, Relationship, effective_date,  # noqa: E402
-                      extract_abolished_law_names, extract_decision_abolished_names, extract_decision_amended_names, extract_valid_from)  # noqa: E402
+from database import (Category, Database, Law, LawFlag, Relationship, content_flags, effective_date,  # noqa: E402
+                      decision_listed_date, extract_abolished_law_names, extract_decision_abolished_names, extract_decision_amended_names,
+                      extract_valid_from)  # noqa: E402
 
 
 def law_text(title, body, header=("2020年1月1日 通过",)):
@@ -89,6 +90,33 @@ class DecisionAbolishTest(unittest.TestCase):
             "<!-- TABLE END -->"), ["铁路留用土地办法"])
 
 
+class DecisionListedDateTest(unittest.TestCase):
+
+    def test_list_item_takes_latest_revision(self):
+        text = law_text("国务院关于修改和废止部分行政法规的决定", [
+            "## 附件2 国务院决定废止的行政法规",
+            "三、危险化学品安全管理条例（2002年1月26日中华人民共和国国务院令第344号公布 根据2011年3月2日"
+            "中华人民共和国国务院令第591号第一次修订 根据2013年12月7日《国务院关于修改部分行政法规的决定》第二次修订）"])
+        self.assertEqual(decision_listed_date(text, "危险化学品安全管理条例"), "2013-12-07")
+
+    def test_table_ignores_reason_column(self):
+        text = law_text("国务院关于废止2000年底以前发布的部分行政法规的决定", [
+            "| 序号 | 行政法规名称 | 发布日期 | 失效年份 | 废止理由 |", "|-----|-----|-----|-----|-----|",
+            "| 59 | 广播电视设施保护条例 | 1987年4月24日国务院发布 | 2000年（7件） |"
+            " 被2000年11月5日中华人民共和国国务院令第295号公布的《广播电视设施保护条例》明令废止。 |"])
+        self.assertEqual(decision_listed_date(text, "广播电视设施保护条例"), "1987-04-24")
+
+    def test_each_version_on_its_own_row(self):
+        text = law_text("国务院关于废止2000年底以前发布的部分行政法规的决定", [
+            "| 序号 | 行政法规名称 | 发布日期 | 失效年份 | 废止理由 |", "|-----|-----|-----|-----|-----|",
+            "| 45 | 中华人民共和国发明奖励条例 | 1978年12月28日国务院发布 | 1999年（11件） | 被…明令废止。 |",
+            "| 53 | 中华人民共和国发明奖励条例 | 1993年6月28日国务院第二次修订发布 | 1999年（11件） | 被…明令废止。 |"])
+        self.assertEqual(decision_listed_date(text, "发明奖励条例"), "1993-06-28")
+
+    def test_not_listed(self):
+        self.assertIsNone(decision_listed_date(law_text("某决定", ["一、某条例"]), "其他条例"))
+
+
 class AbolishClauseTest(unittest.TestCase):
 
     def names(self, *body, header=("2020年1月1日 通过",)):
@@ -107,10 +135,37 @@ class AbolishClauseTest(unittest.TestCase):
             "1. 中华人民共和国惩治军人违反职责罪暂行条例", "2. 关于惩治走私罪的补充规定", "附件二",
             "3. 不在名单里"), ["惩治军人违反职责罪暂行条例", "关于惩治走私罪的补充规定"])
 
+    def test_repeal_of_provisions_within_a_law_ignored(self):
+        self.assertEqual(self.names(
+            "第十九条 本规定自1988年9月1日起施行。1953年1月2日政务院修正发布的《中华人民共和国劳动保险条例》"
+            "中有关女工人、女职员生育待遇的规定和1955年4月26日《国务院关于女工作人员生产假期的通知》同时废止。"),
+            ["国务院关于女工作人员生产假期的通知"])
+
     def test_partial_repeal_and_header_ignored(self):
         self.assertEqual(self.names(
             "第五条 《最高人民法院关于审理劳动争议案件适用法律问题的解释（一）》（法释〔2020〕26号）第三十二条第一款同时废止。",
             header=("2008年1月1日 《中华人民共和国外商投资企业和外国企业所得税法》废止",)), [])
+
+class ContentFlagsTest(unittest.TestCase):
+
+    def test_toc_and_info(self):
+        text = law_text("某法", ["## 第一章 总则", "第一条 内容", "### 第一节 一般规定", "第二条 内容"])
+        self.assertEqual(content_flags(text), (True, True))
+
+    def test_without_toc(self):
+        self.assertEqual(content_flags(law_text("某规定", ["第一条 内容"])), (False, True))
+
+    def test_without_info(self):
+        # 信息部分只有标题，或者只有标记
+        self.assertEqual(content_flags(law_text("某规定", ["## 第一章", "第一条 内容"], header=())), (True, False))
+        self.assertEqual(content_flags(law_text("某规定", ["第一条 内容"], header=("<!-- FORCE BREAK -->",))), (False, False))
+
+    def test_without_info_end_everything_is_info(self):
+        self.assertEqual(content_flags("# 某规定\n\n## 第一章\n\n第一条 内容\n"), (False, True))
+
+    def test_heading_in_info_is_info(self):
+        self.assertEqual(content_flags(law_text("某规定", ["第一条 内容"], header=("## 说明",))), (False, True))
+
 
 class UpdateTest(unittest.TestCase):
 
@@ -320,6 +375,43 @@ class UpdateTest(unittest.TestCase):
         self.assertEqual(Category.get_by_id(moved.category_id).folder, "法律")
         self.assertEqual(moved.level, "法律")
         self.assertIn("找不到文件", out)
+
+    def flags(self, name, publish=None):
+        return LawFlag(self.law(name, publish).flags)
+
+    def test_content_flags_written(self):
+        self.write("行政法规/甲条例(2020-01-01).md", law_text("甲条例", ["## 第一章 总则", "第一条 内容"]))
+        self.write("行政法规/乙条例(2020-01-01).md", law_text("乙条例", ["第一条 内容"], header=()))
+        count, _ = self.update()
+        self.assertEqual(count["flags"], 1)
+        self.assertEqual(self.flags("甲条例"), LawFlag.TOC | LawFlag.INFO)
+        self.assertEqual(self.flags("乙条例"), LawFlag(0))
+        # 文件改了再更新，跟着变
+        self.write("行政法规/乙条例(2020-01-01).md", law_text("乙条例", ["## 第一章", "第一条 内容"]))
+        count, _ = self.update()
+        self.assertEqual(count["flags"], 1)
+        self.assertEqual(self.flags("乙条例"), LawFlag.TOC | LawFlag.INFO)
+
+    def test_history_flag_on_every_version(self):
+        self.write("行政法规/甲条例(2011-01-27).md", law_text("甲条例", ["第一条 内容"]))
+        self.write("行政法规/甲条例(2014-02-20).md", law_text("甲条例", ["第一条 内容"]))
+        self.write("行政法规/乙条例(2011-01-27).md", law_text("乙条例", ["第一条 内容"]))
+        self.update()
+        self.assertIn(LawFlag.HISTORY, self.flags("甲条例", "2011-01-27"))
+        self.assertIn(LawFlag.HISTORY, self.flags("甲条例", "2014-02-20"))
+        self.assertNotIn(LawFlag.HISTORY, self.flags("乙条例"))
+
+    def test_old_database_gets_new_columns(self):
+        import sqlite3
+        db_file = self.root / "db.sqlite3"
+        conn = sqlite3.connect(db_file)
+        conn.execute("CREATE TABLE law (id TEXT PRIMARY KEY, level TEXT, name TEXT, subtitle TEXT, filename TEXT, "
+                     "publish DATE, valid_from DATE, valid_to DATE, \"order\" INTEGER, ver INTEGER, tags TEXT, category_id TEXT)")
+        conn.commit()
+        conn.close()
+        self.write("行政法规/甲条例(2020-01-01).md", law_text("甲条例", ["## 第一章 总则", "第一条 内容"]))
+        self.update()
+        self.assertIn(LawFlag.TOC, self.flags("甲条例"))
 
     def test_rollback_on_error(self):
         self.write("行政法规/戊条例(2020-01-01).md", law_text("戊条例", ["第一条 内容"]))

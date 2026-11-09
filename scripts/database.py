@@ -6,10 +6,11 @@
 
 update 在一个事务里完成，中途出错不会留下改了一半的数据。
 """
+import enum
 import re
 import sqlite3
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 from uuid import uuid4
@@ -57,6 +58,17 @@ class Category(BaseModel):
         return Category.create(name=folder.parts[-1], folder=str(folder))
 
 
+class LawFlag(enum.IntFlag):
+    """law.flags 的各位。和 App 的 TLaw.Flags 一一对应，只能加新位，已有的位不能改含义。"""
+    # 修订链上不止一个版本，可以看修订历史
+    HISTORY = 1 << 0
+    # 正文有目录，见 content_flags
+    TOC = 1 << 1
+    # 正文开头有信息，见 content_flags
+    INFO = 1 << 2
+    # 没有「有相关法律」：实施它的规定可能在用户装了的 DLC 里，只有 App 知道，整项由 App 算
+
+
 class Law(BaseModel):
     id = peewee.UUIDField(primary_key=True, default=uuid4)
     level = peewee.TextField()
@@ -71,6 +83,9 @@ class Law(BaseModel):
     ver = peewee.IntegerField(null=False, default=0)
 
     tags = peewee.TextField(null=True)
+
+    # LawFlag 按位组合，App 打开正文前据此决定显示哪些按钮
+    flags = peewee.IntegerField(null=False, default=0)
 
     category_id = peewee.UUIDField(null=False)
 
@@ -136,6 +151,40 @@ DEPARTMENT_ORDER = [
 ]
 DEPARTMENT_ORDER_START = 500
 DEPARTMENT_ORDER_UNKNOWN = 599
+
+
+def content_flags(content: str) -> Tuple[bool, bool]:
+    """正文有没有目录、信息，返回 (has_toc, has_info)。
+
+    规则必须和 App 的 LawContentParser 一致（App 的单元测试会核对）：逐行去掉首尾空白，跳过空行；
+    - 第一个词正好是「#」的是标题，跳过（信息部分里也一样）
+    - 「<!-- INFO END -->」结束信息部分
+    - 「<!-- FORCE BREAK -->」「<!-- TABLE END -->」是标记，跳过
+    - 信息部分里剩下的任何一行都算信息
+    - 信息部分之后，第一个词以「#」开头（##、### …）的进目录
+    没有「<!-- INFO END -->」的文件全文都算信息，目录为空。
+    """
+    is_desc = True
+    has_toc = False
+    has_info = False
+    for line in content.split("\n"):
+        text = line.strip()
+        if not text:
+            continue
+        first = text.split(" ", 1)[0]
+        if first == "#":
+            continue
+        if text.startswith("<!-- INFO END -->"):
+            is_desc = False
+            continue
+        if text.startswith(("<!-- FORCE BREAK -->", "<!-- TABLE END -->")):
+            continue
+        if is_desc:
+            has_info = True
+            continue
+        if first.startswith("#"):
+            has_toc = True
+    return has_toc, has_info
 
 
 def get_law_level_by_folder(folder: Path) -> str:
@@ -210,9 +259,11 @@ def extract_abolished_law_names(content: str) -> List[str]:
         found += re.findall(r"《([^》]+)》", m.group(1))
     # 「1991年…通过的《A》和1993年…发布的《B》同时废止」：名称之间隔着日期和机关，取这一句里的全部
     for m in re.finditer(r"([^。；\n]*)同时废止", text):
-        # 「《…解释（一）》（法释〔2020〕26号）第三十二条第一款同时废止」只废止其中一款，不算
+        # 「《…解释（一）》（法释〔2020〕26号）第三十二条第一款同时废止」只废止其中一款，不算；
+        # 「《劳动保险条例》中有关女工人、女职员生育待遇的规定…同时废止」只废止其中一部分，也不算
         for name_m in re.finditer(r"《([^》]+)》([^《]*)", m.group(1)):
-            if not re.search(r"第[一二三四五六七八九十百千\d]+[条款项]", name_m.group(2)):
+            rest = name_m.group(2)
+            if not re.search(r"第[一二三四五六七八九十百千\d]+[条款项]", rest) and not re.match(r"\s*中", rest):
                 found.append(name_m.group(1))
     # 刑法附件一：「…下列条例、补充规定和决定…予以废止：」之后逐条列出，名称不带书名号
     listing = False
@@ -252,6 +303,31 @@ def _section_title(line: str) -> bool:
 def extract_decision_abolished_names(content: str) -> List[str]:
     """国务院废止、宣布失效行政法规的决定里列出的法规名。"""
     return scan_decision(content)[0]
+
+
+def decision_listed_date(content: str, name: str) -> Optional[str]:
+    """废止名单里这一项写的最后一个发布、修订日期，没有就是 None。
+
+    「三、危险化学品安全管理条例（2002年1月26日…公布 根据2013年12月7日…第二次修订）」→ 2013-12-07；
+    表格「| 59 | 广播电视设施保护条例 | 1987年4月24日国务院发布 | … | 被2000年11月5日…公布的《…》明令废止 |」
+    只看名称后面那一栏 → 1987-04-24。比库里最新版本早，废止的是更早的同名版本。
+    """
+    _, _, body = content.partition("<!-- INFO END -->")
+    dates = []  # 同一部法规的几个版本可能各占一行，取所有行里最晚的
+    for line in (body or content).splitlines():
+        line = line.strip()
+        if line.startswith("|"):
+            cells = [_normalize_name(c.strip()) for c in line.strip("|").split("|")]
+            if name not in cells or cells.index(name) + 1 >= len(cells):
+                continue
+            text = cells[cells.index(name) + 1]
+        elif (item := _LIST_ITEM.match(line)) and _normalize_name(item.group(1)).startswith(name):
+            # 一项占一行，名称后面的都是这一项的发布、修订记录
+            text = _normalize_name(item.group(1))[len(name):]
+        else:
+            continue
+        dates += [f"{int(y):04d}-{int(m):02d}-{int(d):02d}" for y, m, d in re.findall(_DATE, text)]
+    return max(dates) if dates else None
 
 
 def extract_decision_amended_names(content: str) -> List[str]:
@@ -378,6 +454,19 @@ class Database(object):
             assert self.sqlite_file.name == "db.sqlite3"
         # 已有的表不动，旧数据库会补上新加的表
         self.db.create_tables(self.tables)
+        self.add_missing_columns()
+
+    # 后来加的列。create_tables 不会给已有的表加列，旧数据库在这里补上
+    ADDED_COLUMNS = {
+        "law": ["flags INTEGER NOT NULL DEFAULT 0"],
+    }
+
+    def add_missing_columns(self):
+        for table, columns in self.ADDED_COLUMNS.items():
+            existing = {c.name for c in self.db.get_columns(table)}
+            for column in columns:
+                if column.split(" ", 1)[0] not in existing:
+                    self.db.execute_sql(f"ALTER TABLE {table} ADD COLUMN {column}")
 
     def reset(self):
         print("清空后所有法规会重新生成 ID，App 里用户的收藏、搜索记录都会失效。")
@@ -496,6 +585,8 @@ class Database(object):
             count["restored"] = self.restore_unexplained_expiry()
             self.update_amendments()
             self.update_implementations()
+            # 用到上面生成的关系，放在最后
+            count["flags"] = self.update_flags()
             for type in Relationship.TYPES:
                 count[type] = Relationship.select().where(Relationship.type == type).count()
         return count
@@ -561,6 +652,46 @@ class Database(object):
             print(f"⚠️ 找不到文件：{law}（{categories[law.category_id].folder if law.category_id in categories else '目录不存在'}）")
         count["missing"] = len(missing)
         return count
+
+    def update_flags(self) -> int:
+        """按修订关系和文件写入 law.flags，返回改动的条数。
+
+        历史按修订链算（同一部法规的各个版本相同），和 App 的判断一致：
+        修订链由 supersedes 连起来，链的根是最早的版本。
+        """
+        laws = list(Law.select())
+
+        previous = {r.source_id: r.target_id
+                    for r in Relationship.select().where(Relationship.type == Relationship.SUPERSEDES)}
+
+        def root(id):
+            seen = {id}
+            # 数据有环时停在环上
+            while id in previous and previous[id] not in seen:
+                id = previous[id]
+                seen.add(id)
+            return id
+
+        roots = {law.id: root(law.id) for law in laws}
+        chain_size = Counter(roots.values())
+
+        files = {law.id: path for law, path in self.resolved_laws()}
+        changed = 0
+        for law in laws:
+            flags = LawFlag(0)
+            if chain_size[roots[law.id]] > 1:
+                flags |= LawFlag.HISTORY
+            if path := files.get(law.id):
+                has_toc, has_info = content_flags(path.read_text(encoding="utf-8"))
+                if has_toc:
+                    flags |= LawFlag.TOC
+                if has_info:
+                    flags |= LawFlag.INFO
+            if law.flags != flags:
+                law.flags = int(flags)
+                law.save()
+                changed += 1
+        return changed
 
     def update_versions(self) -> int:
         """所有法规写入生效日期；同名多个版本时，上一版本在下一版本生效时失效。"""
@@ -709,6 +840,10 @@ class Database(object):
                 # 否则多为同名但实为另一部法律（如旧《国家安全法》→《反间谍法》）
                 if last.publish and last.publish >= valid_from:
                     continue
+                # 名单里这一项的日期比最新版本早：废止的是库里没有的旧版本（如 1987 年的《广播电视设施保护条例》）
+                listed = decision_listed_date(content, name) if "决定" in law.name else None
+                if listed and last.publish and last.publish > listed:
+                    continue
                 if last.id not in earliest or valid_from < earliest[last.id][0]:
                     earliest[last.id] = (valid_from, law, last)
         for valid_from, law, last in earliest.values():
@@ -803,6 +938,7 @@ def main():
         print(f"Versions/dates updated: {count['versions']}")
         print(f"Invalidated: {count['invalidated']}")
         print(f"Expiry restored: {count['restored']}")
+        print(f"Flags updated: {count['flags']}")
         print("Relationships: " + ", ".join(f"{type} {count[type]}" for type in Relationship.TYPES))
         print(f"Missing file: {count['missing']}")
         print(f"File not indexed: {count['unindexed']}")
